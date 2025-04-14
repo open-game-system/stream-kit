@@ -1,0 +1,50 @@
+{
+  "name": "@open-game-system/stream-kit-web",
+  "version": "0.0.0",
+  "description": "Core web client library for OGS Cloud Rendering (Stream Kit)",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "clean": "rimraf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@open-game-system/stream-kit-types": "workspace:*"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "jsdom": "^24.0.0"
+  },
+  "peerDependencies": {
+    "typescript": ">=4.5.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "typescript",
+    "web",
+    "stream-kit",
+    "cloud-rendering",
+    "webrtc",
+    "ogs"
+  ],
+  "author": "OpenGameSystem",
+  "license": "MIT"
+} 

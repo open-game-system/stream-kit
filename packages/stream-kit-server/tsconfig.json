@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declarationDir": "./dist",
+    "moduleResolution": "node",
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../stream-kit-types" }
+  ]
+} 

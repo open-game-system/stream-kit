@@ -1,0 +1,20 @@
+{
+  "name": "stream-kit-monorepo",
+  "private": true,
+  "packageManager": "pnpm@9.5.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "test:watch": "turbo run test:watch",
+    "test:coverage": "turbo run test:coverage",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean"
+  },
+  "devDependencies": {
+    "pnpm": "^9.5.0",
+    "turbo": "^2.0.9",
+    "typescript": "^5.4.5"
+  }
+} 
