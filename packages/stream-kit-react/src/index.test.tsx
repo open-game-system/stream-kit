@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { createStreamContext } from './index'; // Import something
+import { StreamProvider, StreamCanvas } from './index';
 
 describe('stream-kit-react', () => {
-  it('should pass placeholder test', () => {
-    expect(typeof createStreamContext).toBe('function');
-    expect(true).toBe(true);
+  it('should export expected components and context', () => {
+    expect(typeof StreamProvider).toBe('object');
+    expect(typeof StreamCanvas).toBe('object');
   });
 }); 

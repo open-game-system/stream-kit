@@ -5,6 +5,13 @@ import {
   InputStreamEvent,
 } from '@open-game-system/stream-kit-types';
 
+// Default render options
+const DEFAULT_RENDER_OPTIONS: RenderOptions = {
+  resolution: '1080p',
+  quality: 'high',
+  targetFps: 60
+};
+
 // Placeholder types and functions
 
 export interface StreamClientOptions {
@@ -14,7 +21,7 @@ export interface StreamClientOptions {
 
 export interface RequestStreamParams {
   renderUrl: string; // URL of the game scene/version to render
-  renderOptions?: RenderOptions;
+  renderOptions?: Partial<RenderOptions>; // Made partial to allow overriding only specific options
   initialData?: Record<string, any>; // Data to pass to the cloud instance
   // webRtcConfig might be client-generated if needed, or handled by broker
 }
@@ -73,7 +80,7 @@ export function createStreamClient(options: StreamClientOptions): StreamClient {
         headers: await getHeaders(),
         body: JSON.stringify({
           renderUrl: params.renderUrl,
-          renderOptions: params.renderOptions,
+          renderOptions: { ...DEFAULT_RENDER_OPTIONS, ...params.renderOptions },
           initialData: params.initialData,
         }),
       });

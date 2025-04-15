@@ -1,8 +1,7 @@
-import type * as http from 'http';
-import type * as puppeteer from 'puppeteer';
-import type { Operation } from 'fast-json-patch';
-import { compare } from 'fast-json-patch';
-import type { StreamState } from '@open-game-system/stream-kit-types';
+import type { StreamState } from "@open-game-system/stream-kit-types";
+import { compare } from "fast-json-patch";
+import type * as http from "http";
+import type * as puppeteer from "puppeteer";
 
 // Placeholder types and options based on STREAM_KIT_SERVER_README_DRAFT.md
 
@@ -11,9 +10,7 @@ export interface CreateStreamKitRouterOptions<TEnv = unknown> {
   puppeteerLaunchOptions?: puppeteer.PuppeteerLaunchOptions;
   defaultViewport?: { width: number; height: number };
   getEnv?: () => TEnv | Promise<TEnv>;
-  validateRequest?: (
-    req: http.IncomingMessage
-  ) => Promise<{
+  validateRequest?: (req: http.IncomingMessage) => Promise<{
     authorized: boolean;
     error?: string;
     status?: number;
@@ -25,7 +22,11 @@ export interface CreateStreamKitRouterOptions<TEnv = unknown> {
 }
 
 export interface StreamKitRouter {
-  (req: http.IncomingMessage, res: http.ServerResponse, next?: (err?: any) => void): Promise<void> | void;
+  (
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    next?: (err?: any) => void
+  ): Promise<void> | void;
 }
 
 // Conceptual State Shape (from README)
@@ -39,7 +40,7 @@ interface InternalStreamSessionState extends StreamState {
     viewport: { width: number; height: number };
   };
   webrtc?: {
-    signalingState: 'idle' | 'negotiating' | 'connected';
+    signalingState: "idle" | "negotiating" | "connected";
     iceCandidatesGathered?: boolean;
   };
   metadata?: Record<string, any>;
@@ -54,7 +55,7 @@ interface InternalStreamSessionState extends StreamState {
 export function createStreamKitRouter<TEnv = unknown>(
   options?: CreateStreamKitRouterOptions<TEnv>
 ): StreamKitRouter {
-  console.log('Creating Stream Kit Router with options:', options);
+  console.log("Creating Stream Kit Router with options:", options);
 
   const sessions = new Map<string, InternalStreamSessionState>();
   const browserInstances = new Map<string, puppeteer.Browser>(); // Manage browser instances
@@ -63,7 +64,7 @@ export function createStreamKitRouter<TEnv = unknown>(
   // Placeholder for the actual router/middleware logic
   const router: StreamKitRouter = async (req, res, next) => {
     const method = req.method?.toUpperCase();
-    const url = req.url || '/';
+    const url = req.url || "/";
     const streamIdMatch = url.match(/^\/(.+)\/sse$/); // Basic match for /<streamId>/sse
 
     console.log(`[StreamKitRouter] Received request: ${method} ${url}`);
@@ -73,27 +74,37 @@ export function createStreamKitRouter<TEnv = unknown>(
       if (options?.validateRequest) {
         const authResult = await options.validateRequest(req);
         if (!authResult.authorized) {
-          res.writeHead(authResult.status || 401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: authResult.error || 'Unauthorized' }));
+          res.writeHead(authResult.status || 401, {
+            "Content-Type": "application/json",
+          });
+          res.end(
+            JSON.stringify({ error: authResult.error || "Unauthorized" })
+          );
           return;
         }
         // Use authResult.callerContext if needed
       }
 
       // --- Routing Logic (Simplified) ---
-      if (method === 'POST' && url === '/') {
+      if (method === "POST" && url === "/") {
         // --- Handle POST /stream (Session Initiation) ---
-        let body = '';
-        req.on('data', (chunk: Buffer | string) => { body += chunk.toString(); });
-        req.on('end', async () => {
+        let body = "";
+        req.on("data", (chunk: Buffer | string) => {
+          body += chunk.toString();
+        });
+        req.on("end", async () => {
           try {
             const { targetUrl, initialData, renderOptions } = JSON.parse(body);
             if (!targetUrl) {
-              throw new Error('Missing targetUrl in request body');
+              throw new Error("Missing targetUrl in request body");
             }
 
-            const streamId = `str-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
-            console.log(`[StreamKitRouter] Initiating stream ${streamId} for URL: ${targetUrl}`);
+            const streamId = `str-${Date.now()}-${Math.random()
+              .toString(36)
+              .substring(2, 8)}`;
+            console.log(
+              `[StreamKitRouter] Initiating stream ${streamId} for URL: ${targetUrl}`
+            );
 
             // TODO: Launch Puppeteer instance
             // const browser = await puppeteer.launch(options?.puppeteerLaunchOptions);
@@ -104,7 +115,7 @@ export function createStreamKitRouter<TEnv = unknown>(
 
             const initialState: InternalStreamSessionState = {
               streamId,
-              status: 'initializing',
+              status: "initializing",
               targetUrl,
               clientConnected: false,
               metadata: initialData,
@@ -113,92 +124,113 @@ export function createStreamKitRouter<TEnv = unknown>(
             };
             sessions.set(streamId, initialState);
 
-            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ streamId, initialState }));
 
             // Simulate state progression
             setTimeout(() => {
               const current = sessions.get(streamId);
               if (current) {
-                sessions.set(streamId, { ...current, clientConnected: true, lastActivityTime: Date.now() });
+                sessions.set(streamId, {
+                  ...current,
+                  clientConnected: true,
+                  lastActivityTime: Date.now(),
+                });
                 sendStatePatch(streamId);
                 setTimeout(() => {
                   const current2 = sessions.get(streamId);
                   if (current2) {
-                    sessions.set(streamId, { ...current2, clientConnected: true, lastActivityTime: Date.now() });
+                    sessions.set(streamId, {
+                      ...current2,
+                      clientConnected: true,
+                      lastActivityTime: Date.now(),
+                    });
                     sendStatePatch(streamId);
                   }
-                }, 1000)
+                }, 1000);
               }
             }, 500);
-
           } catch (err: any) {
-            console.error('[StreamKitRouter] Error handling POST /:', err);
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: err.message || 'Invalid request body' }));
+            console.error("[StreamKitRouter] Error handling POST /:", err);
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({ error: err.message || "Invalid request body" })
+            );
           }
         });
-
-      } else if (method === 'GET' && streamIdMatch) {
+      } else if (method === "GET" && streamIdMatch) {
         // --- Handle GET /stream/{streamId}/sse (State Synchronization) ---
         const streamId = streamIdMatch[1];
         const session = sessions.get(streamId);
 
         if (!session) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Stream session not found' }));
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Stream session not found" }));
           return;
         }
 
-        console.log(`[StreamKitRouter] Client connected to SSE for stream ${streamId}`);
+        console.log(
+          `[StreamKitRouter] Client connected to SSE for stream ${streamId}`
+        );
 
         // Set up SSE headers
         res.writeHead(200, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
         });
-        res.write(':ok\n\n'); // Initial keep-alive comment
+        res.write(":ok\n\n"); // Initial keep-alive comment
 
         sseConnections.set(streamId, res);
-        sessions.set(streamId, { ...session, clientConnected: true, lastActivityTime: Date.now() });
+        sessions.set(streamId, {
+          ...session,
+          clientConnected: true,
+          lastActivityTime: Date.now(),
+        });
 
         // Send initial state or patch if needed?
         sendStatePatch(streamId, session); // Send full state initially
 
-        req.on('close', () => {
-          console.log(`[StreamKitRouter] Client disconnected from SSE for stream ${streamId}`);
+        req.on("close", () => {
+          console.log(
+            `[StreamKitRouter] Client disconnected from SSE for stream ${streamId}`
+          );
           sseConnections.delete(streamId);
           const currentSession = sessions.get(streamId);
           if (currentSession) {
-            sessions.set(streamId, { ...currentSession, clientConnected: false });
+            sessions.set(streamId, {
+              ...currentSession,
+              clientConnected: false,
+            });
           }
         });
-
       } else {
         // --- Handle Not Found or other methods ---
         if (next) {
           next(); // Pass to next middleware if available
         } else {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Not Found' }));
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Not Found" }));
         }
       }
     } catch (err: any) {
-      console.error('[StreamKitRouter] Unhandled error:', err);
+      console.error("[StreamKitRouter] Unhandled error:", err);
       if (options?.onError) {
         options.onError(err);
       }
       if (!res.headersSent) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Internal Server Error' }));
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Internal Server Error" }));
       }
     }
   };
 
   // Function to send state patches (simplified)
   let previousStates = new Map<string, InternalStreamSessionState>();
-  const sendStatePatch = (streamId: string, forceFullState?: InternalStreamSessionState) => {
+  const sendStatePatch = (
+    streamId: string,
+    forceFullState?: InternalStreamSessionState
+  ) => {
     const sseRes = sseConnections.get(streamId);
     const currentState = sessions.get(streamId);
 
@@ -207,27 +239,27 @@ export function createStreamKitRouter<TEnv = unknown>(
     }
 
     let dataToSend: any;
-    let eventType = 'state_patch';
+    let eventType = "state_patch";
 
     if (forceFullState) {
-        eventType = 'state_init'; // Or use a dedicated initial state event
-        dataToSend = forceFullState;
-        previousStates.set(streamId, forceFullState);
+      eventType = "state_init"; // Or use a dedicated initial state event
+      dataToSend = forceFullState;
+      previousStates.set(streamId, forceFullState);
     } else {
-        const previousState = previousStates.get(streamId);
-        if (!previousState) {
-            // If no previous state, send full state as initial patch
-             eventType = 'state_init';
-             dataToSend = currentState;
+      const previousState = previousStates.get(streamId);
+      if (!previousState) {
+        // If no previous state, send full state as initial patch
+        eventType = "state_init";
+        dataToSend = currentState;
+      } else {
+        const patch = compare(previousState, currentState);
+        if (patch.length > 0) {
+          dataToSend = patch;
         } else {
-            const patch = compare(previousState, currentState);
-            if (patch.length > 0) {
-                dataToSend = patch;
-            } else {
-                return; // No changes
-            }
+          return; // No changes
         }
-        previousStates.set(streamId, currentState);
+      }
+      previousStates.set(streamId, currentState);
     }
 
     sseRes.write(`event: ${eventType}\n`);
@@ -249,6 +281,5 @@ export function createStreamKitRouter<TEnv = unknown>(
   //    });
   // }, 60000); // Check timeouts every minute
 
-
   return router;
-} 
+}

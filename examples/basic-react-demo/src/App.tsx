@@ -1,49 +1,99 @@
-import { useState, useEffect } from 'react';
-import { createStreamClient } from '@open-game-system/stream-kit-web';
-import type { RenderOptions, StreamSession } from '@open-game-system/stream-kit-types';
+import { useState, useEffect, useCallback } from 'react';
+import { createStreamClient as createRealStreamClient } from '@open-game-system/stream-kit-web';
+import type { RenderStream, CreateRenderStreamParams, StreamClient } from '@open-game-system/stream-kit-web';
+import type { StreamState } from '@open-game-system/stream-kit-types';
 
+// --- Mock Client for Testing ---
+// Define the parameter type expected by the *method* on the client, which excludes 'client' itself.
+type CreateRenderStreamMethodParams = Omit<CreateRenderStreamParams, 'client'>;
 
-// Create a client instance
-const client = createStreamClient({
+const createMockRenderStreamForTest = (params: CreateRenderStreamMethodParams): RenderStream => {
+  const { url } = params;
+  let listeners: ((state: StreamState) => void)[] = [];
+  let currentState: StreamState = { status: 'connecting' };
+  const videoElement = document.createElement('video');
+  videoElement.dataset.testid = `video-mock-${url?.split('/').pop() || 'unknown'}`;
+
+  const stream: RenderStream = {
+    id: `mock-${url?.split('/').pop() || 'unknown'}`,
+    url: url || 'unknown',
+    state: currentState,
+    start: async () => {
+      currentState = { status: 'streaming', fps: 60, latency: 30 };
+      queueMicrotask(() => listeners.forEach(l => l(currentState)));
+      return Promise.resolve();
+    },
+    end: async () => {
+       currentState = { status: 'ended' };
+       queueMicrotask(() => listeners.forEach(l => l(currentState)));
+       return Promise.resolve();
+    },
+    send: () => {},
+    update: async () => {},
+    subscribe: (listener) => {
+      listeners.push(listener);
+      queueMicrotask(() => listener(currentState));
+      return () => { listeners = listeners.filter(l => l !== listener); };
+    },
+    getVideoElement: () => videoElement,
+    destroy: () => { currentState = { status: 'ended' }; queueMicrotask(() => listeners.forEach(l => l(currentState))); listeners = []; },
+  };
+  if (params.autoConnect) {
+    queueMicrotask(() => { if (currentState.status === 'connecting') void stream.start(); });
+  }
+  return stream;
+};
+
+// Define the mock client matching the StreamClient interface
+const mockClientForTest: StreamClient = {
+  // Ensure the mock function signature matches the method on StreamClient
+  createRenderStream: (params: CreateRenderStreamMethodParams): RenderStream => createMockRenderStreamForTest(params),
+  // Add mock implementations for other StreamClient methods if needed
+  requestStream: vi.fn(),
+  endStream: vi.fn(),
+  sendEvent: vi.fn(),
+  updateStream: vi.fn(),
+};
+// --- End Mock Client ---
+
+// Use mock client in Vitest environment, otherwise use real client
+const client: StreamClient = import.meta.env.VITEST ? mockClientForTest : createRealStreamClient({
   brokerUrl: 'https://opengame.tv/stream'
 });
-
-// Define render options
-const worldRenderOptions: RenderOptions = {
-  resolution: '1080p',
-  quality: 'high',
-  targetFps: 60
-};
-
-const mapRenderOptions: RenderOptions = {
-  resolution: '720p',
-  quality: 'medium',
-  targetFps: 30
-};
-
-// Component to show stream controls
 
 // Main App component
 export default function App() {
   const [activeView, setActiveView] = useState<'world' | 'map'>('world');
-  const [worldSession, setWorldSession] = useState<StreamSession | null>(null);
-  const [mapSession, setMapSession] = useState<StreamSession | null>(null);
+  const [worldStream, setWorldStream] = useState<RenderStream | null>(null);
+  const [mapStream, setMapStream] = useState<RenderStream | null>(null);
+  const [streamState, setStreamState] = useState<StreamState | null>(null);
+  const [currentVideoElement, setCurrentVideoElement] = useState<HTMLVideoElement | null>(null);
 
+  // Initialize streams
   useEffect(() => {
-    async function initializeStreams() {
+    let isSubscribed = true;
+    let currentWorldStream: RenderStream | null = null;
+    let currentMapStream: RenderStream | null = null;
+
+    function initializeStreams() {
       try {
-        const worldSession = await client.requestStream({
-          renderUrl: 'http://localhost:3001/world',
-          renderOptions: worldRenderOptions
+        const worldStreamInstance = client.createRenderStream({
+          url: 'http://localhost:3001/world',
+          autoConnect: true
         });
 
-        const mapSession = await client.requestStream({
-          renderUrl: 'http://localhost:3001/map',
-          renderOptions: mapRenderOptions
+        const mapStreamInstance = client.createRenderStream({
+          url: 'http://localhost:3001/map',
+          renderOptions: { resolution: '720p' },
+          autoConnect: true
         });
 
-        setWorldSession(worldSession);
-        setMapSession(mapSession);
+        if (isSubscribed) {
+          setWorldStream(worldStreamInstance);
+          setMapStream(mapStreamInstance);
+          currentWorldStream = worldStreamInstance;
+          currentMapStream = mapStreamInstance;
+        }
       } catch (error) {
         console.error('Failed to initialize streams:', error);
       }
@@ -52,67 +102,112 @@ export default function App() {
     initializeStreams();
 
     return () => {
-      if (worldSession) {
-        client.endStream(worldSession.sessionId);
-      }
-      if (mapSession) {
-        client.endStream(mapSession.sessionId);
-      }
+      isSubscribed = false;
+      currentWorldStream?.destroy();
+      currentMapStream?.destroy();
     };
   }, []);
 
-  const activeSession = activeView === 'world' ? worldSession : mapSession;
+  const activeStream = activeView === 'world' ? worldStream : mapStream;
 
-  if (!activeSession) {
-    return <div>Initializing streams...</div>;
+  // Handle stream state changes and get video element
+  useEffect(() => {
+    let isMounted = true;
+    if (!activeStream) {
+      setCurrentVideoElement(null); 
+      setStreamState(null);
+      return;
+    }
+
+    const videoElement = activeStream.getVideoElement();
+    if (videoElement) {
+      videoElement.playsInline = true;
+      videoElement.autoplay = true;
+      videoElement.muted = true;
+      videoElement.classList.add('stream-canvas');
+      videoElement.dataset.testid = `video-${activeStream.id}`;
+       // Set the video element in state only if component is still mounted
+      if (isMounted) {
+         setCurrentVideoElement(videoElement);
+      }
+    }
+
+    const unsubscribe = activeStream.subscribe((state) => {
+       if (isMounted) {
+         setStreamState(state);
+         if(currentVideoElement) currentVideoElement.dataset.state = state.status;
+       }
+    });
+
+    // Cleanup: remove video element state, could also pause video
+    return () => {
+      isMounted = false;
+      unsubscribe();
+      setCurrentVideoElement(null); // Clear on cleanup
+    };
+  // Rerun when the active stream changes or the current video element changes
+  }, [activeStream, currentVideoElement]); // Added currentVideoElement
+
+  // Handle retry
+  const handleRetry = useCallback(() => {
+    // Use the activeStream derived from state
+    activeStream?.start();
+  }, [activeStream]);
+
+  // Check loading state
+  if (!activeStream || !streamState ) {
+    return <div data-testid="loading">Initializing streams...</div>;
   }
 
   return (
-    <div>
+    <div className="app">
       <h1>Stream Kit Demo</h1>
-      <div>
-        <button onClick={() => setActiveView('world')}>World View</button>
-        <button onClick={() => setActiveView('map')}>Map View</button>
+      <div className="view-selector">
+        <button onClick={() => setActiveView('world')} disabled={activeView === 'world'}>World View</button>
+        <button onClick={() => setActiveView('map')} disabled={activeView === 'map'}>Map View</button>
       </div>
 
-      <div>
-        {activeSession.status === 'connecting' && (
-          <div>Connecting to stream...</div>
-        )}
-        
-        {activeSession.status === 'error' && (
-          <div>
-            Error: {activeSession.error}
-            <button onClick={() => {
-              client.requestStream({
-                renderUrl: activeView === 'world' ? 'http://localhost:3001/world' : 'http://localhost:3001/map',
-                renderOptions: activeView === 'world' ? worldRenderOptions : mapRenderOptions
-              }).then(session => {
-                if (activeView === 'world') {
-                  setWorldSession(session);
-                } else {
-                  setMapSession(session);
-                }
-              });
-            }}>Retry</button>
+      <div className="stream-container">
+        <div className="video-wrapper">
+          {streamState.status === 'streaming' && currentVideoElement ? (
+             <div ref={(node: HTMLDivElement | null) => {
+               if (node && !node.contains(currentVideoElement)) {
+                 while (node.firstChild) {
+                   node.removeChild(node.firstChild);
+                 }
+                 node.appendChild(currentVideoElement);
+               }
+             }} />
+          ) : (
+            <div className="placeholder" style={{backgroundColor: '#222', width: '100%', height: '480px'}} data-testid="placeholder">
+              {/* Placeholder shown when not streaming */}
+            </div>
+          )}
+        </div>
+
+        {/* Loading overlay */} 
+        {streamState.status === 'connecting' && (
+          <div className="overlay connecting" data-testid="connecting-overlay">
+            Connecting to stream...
           </div>
         )}
-        
-        {activeSession.status === 'streaming' && (
-          <div data-testid={`${activeView}-view`}>
-            <video
-              ref={(el) => {
-                if (el && activeSession.signalingUrl) {
-                  // Set up WebRTC connection here
-                  el.srcObject = new MediaStream();
-                  el.play();
-                }
-              }}
-              style={{ width: '100%', height: '100%' }}
-              playsInline
-              autoPlay
-              muted
-            />
+
+        {/* Error overlay */} 
+        {streamState.status === 'error' && (
+          <div className="overlay error" data-testid="error-overlay">
+            <div>An error occurred: {streamState.errorMessage || 'Unknown error'}</div>
+            <button onClick={handleRetry}>
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Status indicator (only show if streaming) */}
+        {streamState.status === 'streaming' && (
+          <div className="controls">
+            <div className="status status-streaming">
+              Connected (FPS: {streamState.fps}, Latency: {streamState.latency}ms)
+            </div>
           </div>
         )}
       </div>

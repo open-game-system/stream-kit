@@ -1,10 +1,10 @@
 # @open-game-system/stream-kit-react
 
-React bindings for the Open Game System (OGS) Cloud Rendering service.
+React components for displaying WebRTC streams from the Open Game System (OGS) Cloud Rendering service.
 
 ## Overview
 
-This package provides React components, hooks, and context providers for integrating cloud-rendered streams into your React applications. It wraps the core functionality from `@open-game-system/stream-kit-web` in a React-friendly API.
+This package provides React components for integrating cloud-rendered streams into your React applications.
 
 ## Installation
 
@@ -16,171 +16,252 @@ pnpm add @open-game-system/stream-kit-react @open-game-system/stream-kit-web @op
 yarn add @open-game-system/stream-kit-react @open-game-system/stream-kit-web @open-game-system/stream-kit-types
 ```
 
-## Usage
-
-### Basic Example
+## Basic Usage
 
 ```tsx
-import React from 'react';
-import { createStreamContext } from '@open-game-system/stream-kit-react';
+import { StreamProvider, StreamCanvas } from '@open-game-system/stream-kit-react';
 import { createStreamClient } from '@open-game-system/stream-kit-web';
 
-// Create a context for your stream
-const StreamContext = createStreamContext();
-
-// Create a client instance
+// Create the client
 const client = createStreamClient({
-  brokerUrl: 'https://your-game.com/stream'
+  brokerUrl: 'https://opengame.tv/stream'
 });
 
-// Create a stream instance
-const worldStream = client.createRenderStream({
-  url: 'https://your-game.com/render/world-view'
-});
-
-function WorldView() {
+function App() {
   return (
-    <StreamContext.Provider stream={worldStream}>
-      <div className="relative w-full h-[480px] bg-gray-900">
-        {/* Canvas renders the video stream */}
-        <StreamContext.Canvas className="w-full h-full" />
-
-        {/* Show loading state */}
-        <StreamContext.Connecting>
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-white">
-            Connecting...
-          </div>
-        </StreamContext.Connecting>
-
-        {/* Show errors */}
-        <StreamContext.Error>
-          {(error) => (
-            <div className="absolute inset-0 flex items-center justify-center bg-red-900/50 text-white">
-              Error: {error.message}
-            </div>
-          )}
-        </StreamContext.Error>
+    <StreamProvider client={client}>
+      <div className="stream-container">
+        {/* Render the video stream */}
+        <StreamCanvas 
+          url="http://localhost:3001/world"
+          className="stream-canvas" 
+        />
       </div>
-    </StreamContext.Provider>
+    </StreamProvider>
   );
 }
 ```
 
-### Multiple Views Example
+## Components
+
+### StreamProvider
+
+Root provider component that manages the stream client:
 
 ```tsx
-import React, { useState } from 'react';
-import { createStreamContext } from '@open-game-system/stream-kit-react';
-import { createStreamClient } from '@open-game-system/stream-kit-web';
+<StreamProvider client={client}>
+  {/* Your app */}
+</StreamProvider>
+```
 
-const StreamContext = createStreamContext();
+### StreamCanvas
 
-const client = createStreamClient({
-  brokerUrl: 'https://your-game.com/stream'
+Component that renders the video stream:
+
+```tsx
+<StreamCanvas 
+  url="http://localhost:3001/world"
+  className="stream-video"
+  style={{ width: '100%', height: '100%' }}
+  renderOptions={{
+    resolution: '1080p',
+    quality: 'high'
+  }}
+  onStateChange={(state) => {
+    console.log('Stream state:', state);
+  }}
+/>
+```
+
+## Testing
+
+The `@open-game-system/stream-kit-testing` package provides a mock client that allows you to simulate stream states and events:
+
+```tsx
+import { render, screen } from '@testing-library/react';
+import { createMockStreamClient } from '@open-game-system/stream-kit-testing';
+
+describe('Stream Components', () => {
+  it('handles stream state changes', async () => {
+    const mockClient = createMockStreamClient();
+    const onStateChange = vi.fn();
+
+    render(
+      <StreamProvider client={mockClient}>
+        <StreamCanvas 
+          url="http://test.com/stream"
+          onStateChange={onStateChange} 
+        />
+      </StreamProvider>
+    );
+
+    // Initial state should be connecting
+    expect(onStateChange).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'connecting'
+    }));
+
+    // Simulate successful connection
+    await mockClient.simulateStreamState({
+      status: 'streaming',
+      fps: 60,
+      latency: 50
+    });
+
+    // Should update with new state
+    expect(onStateChange).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'streaming',
+      fps: 60,
+      latency: 50
+    }));
+
+    // Simulate error
+    await mockClient.simulateStreamState({
+      status: 'error',
+      error: new Error('Connection lost')
+    });
+
+    expect(onStateChange).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'error',
+      error: expect.any(Error)
+    }));
+  });
+
+  it('handles stream events', async () => {
+    const mockClient = createMockStreamClient();
+    
+    const { container } = render(
+      <StreamProvider client={mockClient}>
+        <StreamCanvas 
+          url="http://test.com/stream"
+          onEvent={(event) => {
+            if (event.type === 'click') {
+              container.querySelector('.overlay')?.classList.add('clicked');
+            }
+          }}
+        />
+      </StreamProvider>
+    );
+
+    // Simulate stream starting
+    await mockClient.simulateStreamState({ status: 'streaming' });
+
+    // Simulate receiving a click event from the stream
+    await mockClient.simulateStreamEvent({
+      type: 'click',
+      position: { x: 100, y: 100 }
+    });
+
+    expect(container.querySelector('.overlay.clicked')).toBeInTheDocument();
+  });
+
+  it('handles stream quality changes', async () => {
+    const mockClient = createMockStreamClient();
+    const onQualityChange = vi.fn();
+
+    render(
+      <StreamProvider client={mockClient}>
+        <StreamCanvas 
+          url="http://test.com/stream"
+          onQualityChange={onQualityChange}
+          renderOptions={{
+            resolution: '1080p',
+            quality: 'high'
+          }}
+        />
+      </StreamProvider>
+    );
+
+    // Simulate quality degradation
+    await mockClient.simulateStreamQuality({
+      resolution: '720p',
+      quality: 'medium',
+      reason: 'bandwidth'
+    });
+
+    expect(onQualityChange).toHaveBeenCalledWith({
+      resolution: '720p',
+      quality: 'medium',
+      reason: 'bandwidth'
+    });
+  });
 });
+```
 
-const worldStream = client.createRenderStream({
-  url: 'https://your-game.com/render/world-view'
-});
+The mock client provides several methods for testing:
 
-const mapStream = client.createRenderStream({
-  url: 'https://your-game.com/render/map-view'
-});
+- `simulateStreamState(state)`: Change the stream's state (connecting, streaming, error, etc.)
+- `simulateStreamEvent(event)`: Simulate receiving an event from the stream
+- `simulateStreamQuality(quality)`: Simulate stream quality changes
+- `simulateDisconnect()`: Simulate unexpected disconnection
+- `simulateReconnect()`: Simulate successful reconnection
 
+This allows you to test all aspects of your stream integration, including:
+- State transitions
+- Event handling
+- Quality adaptations
+- Error scenarios
+- Reconnection logic
+
+## Examples
+
+### Multiple Views
+
+```tsx
 function GameWithMultipleViews() {
-  const [activeView, setActiveView] = useState('world');
-  
   return (
-    <div>
-      <div className="controls">
-        <button onClick={() => setActiveView('world')} disabled={activeView === 'world'}>
-          World View
-        </button>
-        <button onClick={() => setActiveView('map')} disabled={activeView === 'map'}>
-          Map View
-        </button>
+    <StreamProvider client={client}>
+      <div className="views">
+        <StreamCanvas 
+          url="http://localhost:3001/world"
+          className="world-view"
+        />
+        <StreamCanvas 
+          url="http://localhost:3001/map"
+          className="map-view"
+          renderOptions={{ resolution: '720p' }}
+        />
       </div>
-      
-      {activeView === 'world' ? (
-        <StreamContext.Provider stream={worldStream}>
-          <StreamContext.Canvas className="w-full h-[480px]" />
-          <StreamContext.Connecting>Loading world view...</StreamContext.Connecting>
-        </StreamContext.Provider>
-      ) : (
-        <StreamContext.Provider stream={mapStream}>
-          <StreamContext.Canvas className="w-full h-[480px]" />
-          <StreamContext.Connecting>Loading map view...</StreamContext.Connecting>
-        </StreamContext.Provider>
-      )}
-    </div>
+    </StreamProvider>
   );
 }
 ```
 
-### Using Hooks
+### With Loading States
 
 ```tsx
-import { useStreamState, useStreamInstance } from '@open-game-system/stream-kit-react';
-
-function StreamControls() {
-  const stream = useStreamInstance();
-  const state = useStreamState();
-  
+function StreamWithStates() {
   return (
-    <div>
-      <div>Status: {state.status}</div>
-      {state.latency && <div>Latency: {state.latency}ms</div>}
-      {state.fps && <div>FPS: {state.fps}</div>}
-      
-      <button onClick={() => stream.send({
-        type: 'command',
-        data: { command: 'togglePause' }
-      })}>
-        Toggle Pause
-      </button>
-    </div>
+    <StreamProvider client={client}>
+      <div className="stream-container">
+        <StreamCanvas 
+          url="http://localhost:3001/world"
+          className="stream-canvas"
+          onStateChange={(state) => {
+            if (state.status === 'connecting') {
+              // Show loading UI
+            } else if (state.status === 'streaming') {
+              // Show connected UI
+            } else if (state.status === 'error') {
+              // Show error UI
+            }
+          }}
+        />
+      </div>
+    </StreamProvider>
   );
 }
 ```
 
-## API Reference
+## Best Practices
 
-### Context Factory
+1. Use a single `StreamProvider` at the root of your app
+2. Each `StreamCanvas` manages its own stream instance
+3. Handle stream states via the `onStateChange` prop
+4. Use the testing utilities for reliable tests
 
-```typescript
-function createStreamContext() {
-  return {
-    Provider: StreamProvider,
-    Canvas: StreamCanvas,
-    Connecting: Connecting,
-    Streaming: Streaming,
-    Ended: Ended,
-    Error: StreamError,
-    useStream: useStreamInstance,
-    useStreamState: useStreamState
-  };
-}
-```
+## TypeScript Support
 
-### Components
-
-- `StreamProvider`: Context provider that makes a stream instance available to children
-- `Canvas`: Renders the video stream
-- `Connecting`: Renders children while stream is connecting
-- `Streaming`: Renders children while stream is active
-- `Ended`: Renders children when stream has ended
-- `Error`: Renders children (with error details) when stream encounters an error
-
-### Hooks
-
-- `useStreamInstance()`: Get the current stream instance
-- `useStreamState()`: Get the current stream state
-
-## Related Packages
-
-- `@open-game-system/stream-kit-web`: Core client implementation
-- `@open-game-system/stream-kit-types`: TypeScript type definitions
-- `@open-game-system/stream-kit-server`: Server-side implementation
+All components are fully typed. The stream state types are inherited from `@open-game-system/stream-kit-types`.
 
 ## License
 

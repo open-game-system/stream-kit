@@ -17,7 +17,7 @@ class MockMediaStream {
 }
 
 // Add to global
-global.MediaStream = MockMediaStream as any;
+global.MediaStream = MockMediaStream as unknown as typeof MediaStream;
 
 afterEach(() => {
   cleanup();
