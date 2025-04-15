@@ -1,101 +1,121 @@
-import React, { useState } from 'react';
-import { createStreamContext } from '@open-game-system/stream-kit-react';
-import { createRenderStream } from '@open-game-system/stream-kit-web';
+import { useState, useEffect } from 'react';
+import { createStreamClient } from '@open-game-system/stream-kit-web';
+import type { RenderOptions, StreamSession } from '@open-game-system/stream-kit-types';
 
-// Create stream context
-const StreamContext = createStreamContext();
 
-// Create stream instances
-const worldStream = createRenderStream({
-  url: 'https://demo.opengame.org/render/world',
-  renderOptions: {
-    resolution: '1080p',
-    quality: 'high'
-  }
+// Create a client instance
+const client = createStreamClient({
+  brokerUrl: 'https://opengame.tv/stream'
 });
 
-const mapStream = createRenderStream({
-  url: 'https://demo.opengame.org/render/map',
-  renderOptions: {
-    resolution: '720p',
-    quality: 'medium'
-  }
-});
+// Define render options
+const worldRenderOptions: RenderOptions = {
+  resolution: '1080p',
+  quality: 'high',
+  targetFps: 60
+};
 
-function StreamControls() {
-  const state = StreamContext.useStreamState();
-  const stream = StreamContext.useStream();
+const mapRenderOptions: RenderOptions = {
+  resolution: '720p',
+  quality: 'medium',
+  targetFps: 30
+};
 
-  return (
-    <div className="controls">
-      <div className="status">
-        Status: <span className={`status-${state.status}`}>{state.status}</span>
-        {state.latency && <span> ({state.latency}ms)</span>}
-        {state.fps && <span> @ {state.fps} FPS</span>}
-      </div>
-      <button
-        onClick={() => stream.send({
-          type: 'command',
-          data: { command: 'togglePause' }
-        })}
-      >
-        Toggle Pause
-      </button>
-    </div>
-  );
-}
+// Component to show stream controls
 
-function App() {
+// Main App component
+export default function App() {
   const [activeView, setActiveView] = useState<'world' | 'map'>('world');
-  const currentStream = activeView === 'world' ? worldStream : mapStream;
+  const [worldSession, setWorldSession] = useState<StreamSession | null>(null);
+  const [mapSession, setMapSession] = useState<StreamSession | null>(null);
+
+  useEffect(() => {
+    async function initializeStreams() {
+      try {
+        const worldSession = await client.requestStream({
+          renderUrl: 'http://localhost:3001/world',
+          renderOptions: worldRenderOptions
+        });
+
+        const mapSession = await client.requestStream({
+          renderUrl: 'http://localhost:3001/map',
+          renderOptions: mapRenderOptions
+        });
+
+        setWorldSession(worldSession);
+        setMapSession(mapSession);
+      } catch (error) {
+        console.error('Failed to initialize streams:', error);
+      }
+    }
+
+    initializeStreams();
+
+    return () => {
+      if (worldSession) {
+        client.endStream(worldSession.sessionId);
+      }
+      if (mapSession) {
+        client.endStream(mapSession.sessionId);
+      }
+    };
+  }, []);
+
+  const activeSession = activeView === 'world' ? worldSession : mapSession;
+
+  if (!activeSession) {
+    return <div>Initializing streams...</div>;
+  }
 
   return (
-    <div className="app">
+    <div>
       <h1>Stream Kit Demo</h1>
-      
-      <div className="view-selector">
-        <button
-          onClick={() => setActiveView('world')}
-          disabled={activeView === 'world'}
-        >
-          World View
-        </button>
-        <button
-          onClick={() => setActiveView('map')}
-          disabled={activeView === 'map'}
-        >
-          Map View
-        </button>
+      <div>
+        <button onClick={() => setActiveView('world')}>World View</button>
+        <button onClick={() => setActiveView('map')}>Map View</button>
       </div>
 
-      <StreamContext.Provider stream={currentStream}>
-        <div className="stream-container">
-          <StreamContext.Canvas className="stream-canvas" />
-          
-          <StreamContext.Connecting>
-            <div className="overlay connecting">
-              Connecting to {activeView} view...
-            </div>
-          </StreamContext.Connecting>
-
-          <StreamContext.Error>
-            {(error) => (
-              <div className="overlay error">
-                Error: {error.message}
-                <button onClick={() => currentStream.start()}>
-                  Retry Connection
-                </button>
-              </div>
-            )}
-          </StreamContext.Error>
-
-          <StreamContext.Streaming>
-            <StreamControls />
-          </StreamContext.Streaming>
-        </div>
-      </StreamContext.Provider>
+      <div>
+        {activeSession.status === 'connecting' && (
+          <div>Connecting to stream...</div>
+        )}
+        
+        {activeSession.status === 'error' && (
+          <div>
+            Error: {activeSession.error}
+            <button onClick={() => {
+              client.requestStream({
+                renderUrl: activeView === 'world' ? 'http://localhost:3001/world' : 'http://localhost:3001/map',
+                renderOptions: activeView === 'world' ? worldRenderOptions : mapRenderOptions
+              }).then(session => {
+                if (activeView === 'world') {
+                  setWorldSession(session);
+                } else {
+                  setMapSession(session);
+                }
+              });
+            }}>Retry</button>
+          </div>
+        )}
+        
+        {activeSession.status === 'streaming' && (
+          <div data-testid={`${activeView}-view`}>
+            <video
+              ref={(el) => {
+                if (el && activeSession.signalingUrl) {
+                  // Set up WebRTC connection here
+                  el.srcObject = new MediaStream();
+                  el.play();
+                }
+              }}
+              style={{ width: '100%', height: '100%' }}
+              playsInline
+              autoPlay
+              muted
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
-}
-
-export default App; 
+} 

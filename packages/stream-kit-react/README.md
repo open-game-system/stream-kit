@@ -23,13 +23,18 @@ yarn add @open-game-system/stream-kit-react @open-game-system/stream-kit-web @op
 ```tsx
 import React from 'react';
 import { createStreamContext } from '@open-game-system/stream-kit-react';
-import { createRenderStream } from '@open-game-system/stream-kit-web';
+import { createStreamClient } from '@open-game-system/stream-kit-web';
 
 // Create a context for your stream
 const StreamContext = createStreamContext();
 
+// Create a client instance
+const client = createStreamClient({
+  brokerUrl: 'https://your-game.com/stream'
+});
+
 // Create a stream instance
-const worldStream = createRenderStream({
+const worldStream = client.createRenderStream({
   url: 'https://your-game.com/render/world-view'
 });
 
@@ -66,15 +71,19 @@ function WorldView() {
 ```tsx
 import React, { useState } from 'react';
 import { createStreamContext } from '@open-game-system/stream-kit-react';
-import { createRenderStream } from '@open-game-system/stream-kit-web';
+import { createStreamClient } from '@open-game-system/stream-kit-web';
 
 const StreamContext = createStreamContext();
 
-const worldStream = createRenderStream({
+const client = createStreamClient({
+  brokerUrl: 'https://your-game.com/stream'
+});
+
+const worldStream = client.createRenderStream({
   url: 'https://your-game.com/render/world-view'
 });
 
-const mapStream = createRenderStream({
+const mapStream = client.createRenderStream({
   url: 'https://your-game.com/render/map-view'
 });
 

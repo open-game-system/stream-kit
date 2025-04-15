@@ -2,7 +2,6 @@ import {
   RenderOptions,
   StreamSession,
   StreamState,
-  StreamEvent,
   InputStreamEvent,
 } from '@open-game-system/stream-kit-types';
 
@@ -40,6 +39,11 @@ export interface StreamClient {
    * Updates a stream session.
    */
   updateStream: (sessionId: string, updates: { renderOptions?: RenderOptions, sceneData?: any }) => Promise<void>;
+
+  /**
+   * Creates a new render stream instance.
+   */
+  createRenderStream: (params: Omit<CreateRenderStreamParams, 'client'>) => RenderStream;
 }
 
 /**
@@ -62,17 +66,15 @@ export function createStreamClient(options: StreamClientOptions): StreamClient {
     return headers;
   };
 
-  return {
+  const client: StreamClient = {
     requestStream: async (params: RequestStreamParams): Promise<StreamSession> => {
       const response = await fetch(`${brokerUrl}/stream/session`, {
         method: 'POST',
         headers: await getHeaders(),
         body: JSON.stringify({
           renderUrl: params.renderUrl,
-          // clientId might be generated server-side or passed if needed
           renderOptions: params.renderOptions,
           initialData: params.initialData,
-          // webRtcConfig could be added here if client provides SDP type etc.
         }),
       });
 
@@ -82,6 +84,7 @@ export function createStreamClient(options: StreamClientOptions): StreamClient {
       }
       return response.json();
     },
+
     endStream: async (sessionId: string): Promise<void> => {
       const response = await fetch(`${brokerUrl}/stream/session/${sessionId}`, {
         method: 'DELETE',
@@ -90,40 +93,44 @@ export function createStreamClient(options: StreamClientOptions): StreamClient {
 
       if (!response.ok) {
         const errorBody = await response.text();
-        // Don't throw if already 404 (session might be gone)
         if (response.status !== 404) {
-           throw new Error(`Failed to end stream (${response.status}): ${errorBody}`);
+          throw new Error(`Failed to end stream (${response.status}): ${errorBody}`);
         }
       }
-      // Response body might contain usage stats, ignored for now
     },
+
     sendEvent: async (sessionId: string, event: InputStreamEvent): Promise<void> => {
       const response = await fetch(`${brokerUrl}/stream/session/${sessionId}/input`, {
         method: 'POST',
         headers: await getHeaders(),
-        body: JSON.stringify(event), // Send the whole event structure
+        body: JSON.stringify(event),
       });
 
       if (!response.ok) {
         const errorBody = await response.text();
         throw new Error(`Failed to send event (${response.status}): ${errorBody}`);
       }
-      // Response might contain ack/latency info, ignored for now
     },
-    updateStream: async (sessionId: string, updates: { renderOptions?: RenderOptions, sceneData?: any }): Promise<void> => {
-        const response = await fetch(`${brokerUrl}/stream/session/${sessionId}`, {
-            method: 'PATCH',
-            headers: await getHeaders(),
-            body: JSON.stringify(updates),
-        });
 
-        if (!response.ok) {
-            const errorBody = await response.text();
-            throw new Error(`Failed to update stream (${response.status}): ${errorBody}`);
-        }
-        // Response might contain effective settings, ignored for now
+    updateStream: async (sessionId: string, updates: { renderOptions?: RenderOptions, sceneData?: any }): Promise<void> => {
+      const response = await fetch(`${brokerUrl}/stream/session/${sessionId}`, {
+        method: 'PATCH',
+        headers: await getHeaders(),
+        body: JSON.stringify(updates),
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Failed to update stream (${response.status}): ${errorBody}`);
+      }
     },
+
+    createRenderStream: (params: Omit<CreateRenderStreamParams, 'client'>): RenderStream => {
+      return createRenderStream({ ...params, client });
+    }
   };
+
+  return client;
 }
 
 /**
@@ -151,7 +158,7 @@ export interface CreateRenderStreamParams {
   autoConnect?: boolean; // Automatically call start()?
 }
 
-export function createRenderStream(params: CreateRenderStreamParams): RenderStream {
+function createRenderStream(params: CreateRenderStreamParams): RenderStream {
   const { client, url, initialData, renderOptions, autoConnect = true } = params;
   const streamId = `render-stream-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 

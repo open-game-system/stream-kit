@@ -27,7 +27,7 @@ yarn add @open-game-system/stream-kit-web @open-game-system/stream-kit-types
 ### Basic Example
 
 ```typescript
-import { createStreamClient, createRenderStream } from '@open-game-system/stream-kit-web';
+import { createStreamClient } from '@open-game-system/stream-kit-web';
 
 // Create a client instance
 const client = createStreamClient({
@@ -36,8 +36,7 @@ const client = createStreamClient({
 });
 
 // Create a render stream instance
-const stream = createRenderStream({
-  client,
+const stream = client.createRenderStream({
   url: 'https://your-game.com/render/scene',
   renderOptions: {
     resolution: '1080p',
@@ -75,8 +74,7 @@ stream.destroy();
 #### Custom WebRTC Configuration
 
 ```typescript
-const stream = createRenderStream({
-  client,
+const stream = client.createRenderStream({
   url: 'https://your-game.com/render/scene',
   renderOptions: {
     resolution: '1080p',
@@ -119,7 +117,7 @@ stream.subscribe((state) => {
 
 ### StreamClient
 
-Low-level client for interacting with the OGS Stream API:
+Core client for interacting with the OGS Stream API:
 
 ```typescript
 interface StreamClient {
@@ -127,6 +125,7 @@ interface StreamClient {
   endStream: (sessionId: string) => Promise<void>;
   sendEvent: (sessionId: string, event: InputStreamEvent) => Promise<void>;
   updateStream: (sessionId: string, updates: StreamUpdates) => Promise<void>;
+  createRenderStream: (params: CreateRenderStreamParams) => RenderStream;
 }
 ```
 

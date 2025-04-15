@@ -93,4 +93,69 @@ export interface ServerStreamSessionState extends StreamState {
 /**
  * Type for JSON Patch operations (RFC 6902).
  */
-export type StatePatchOperation = Operation; 
+export type StatePatchOperation = Operation;
+
+/**
+ * Parameters for requesting a new stream session.
+ */
+export interface RequestStreamParams {
+  renderUrl: string;
+  renderOptions?: RenderOptions;
+  initialData?: Record<string, any>;
+}
+
+/**
+ * Parameters for creating a render stream.
+ */
+export interface CreateRenderStreamParams {
+  url: string;
+  initialData?: Record<string, any>;
+  renderOptions?: RenderOptions;
+  autoConnect?: boolean;
+}
+
+/**
+ * Interface for a render stream instance.
+ */
+export interface RenderStream {
+  readonly id: string;
+  readonly url: string;
+  readonly state: StreamState;
+  start: () => Promise<void>;
+  end: () => Promise<void>;
+  send: (event: InputStreamEvent) => void;
+  update: (updates: { renderOptions?: RenderOptions, sceneData?: any }) => Promise<void>;
+  subscribe: (listener: (state: StreamState) => void) => () => void;
+  getVideoElement: () => HTMLVideoElement | null;
+  destroy: () => void;
+}
+
+/**
+ * Core client interface for interacting with the OGS Stream API.
+ */
+export interface StreamClient {
+  /**
+   * Requests a new cloud rendering stream session.
+   */
+  requestStream: (params: RequestStreamParams) => Promise<StreamSession>;
+
+  /**
+   * Ends an active stream session.
+   */
+  endStream: (sessionId: string) => Promise<void>;
+
+  /**
+   * Sends an event/input to an active stream session.
+   */
+  sendEvent: (sessionId: string, event: InputStreamEvent) => Promise<void>;
+
+  /**
+   * Updates a stream session.
+   */
+  updateStream: (sessionId: string, updates: { renderOptions?: RenderOptions, sceneData?: any }) => Promise<void>;
+
+  /**
+   * Creates a new render stream instance.
+   */
+  createRenderStream: (params: Omit<CreateRenderStreamParams, 'client'>) => RenderStream;
+} 

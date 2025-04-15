@@ -32,7 +32,7 @@ function StreamProvider({ stream, children }: StreamProviderProps) {
 function useStreamInstance(): RenderStream {
   const context = useContext(StreamInstanceContext);
   if (!context || !context.stream) {
-    throw new globalThis.Error('useStreamInstance must be used within a StreamProvider');
+    throw new Error('useStreamInstance must be used within a StreamProvider');
   }
   return context.stream;
 }
@@ -42,17 +42,13 @@ function useStreamInstance(): RenderStream {
  */
 function useStreamState(): StreamState {
   const stream = useStreamInstance();
-
   const subscribe = useMemo(() => stream.subscribe.bind(stream), [stream]);
   const getSnapshot = useMemo(() => () => stream.state, [stream]);
   const getServerSnapshot = useMemo(() => () => stream.state, [stream]); // Same for SSR/initial
-
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
 
-interface StreamCanvasProps extends React.VideoHTMLAttributes<HTMLVideoElement> {
-  // Remove comment about canvas
-}
+interface StreamCanvasProps extends React.VideoHTMLAttributes<HTMLVideoElement> {}
 
 /**
  * Component that renders the video stream.
@@ -66,70 +62,44 @@ function StreamCanvas(props: StreamCanvasProps) {
     const currentVideoRef = videoRef.current;
 
     if (videoElement && currentVideoRef && currentVideoRef.parentNode) {
-      // Check if the video element is already the one we have
       if (currentVideoRef !== videoElement) {
-        // Replace the ref's element with the one from the stream
-        // This handles cases where the video element might be recreated
         currentVideoRef.parentNode.replaceChild(videoElement, currentVideoRef);
-        // We might not need the ref anymore if the element is directly managed?
-        // For now, we assume the stream gives us THE video element to use.
       }
-    } else if (videoElement && currentVideoRef) {
-      // If the ref exists but doesn't have a parent yet (initial render?)
-      // And the stream provides an element, let's try attaching it.
-      // This logic might need refinement based on how stream.getVideoElement behaves.
-      if (currentVideoRef.parentNode) {
-          // If it has a parent, replace (similar to above)
-          currentVideoRef.parentNode.replaceChild(videoElement, currentVideoRef);
-      } else {
-          // If no parent, maybe just assign srcObject? This depends on how the stream manages the element
-          // If getVideoElement *creates* it, we need to append it.
-          // Let's assume for now it replaces the ref placeholder.
-      }
-      // If the stream manages the element, just ensure it's playing
-      videoElement.play().catch((err: any) => console.error("Video play failed:", err));
     }
+  }, [stream]);
 
-    // Cleanup function to potentially pause video or remove element?
-    // Depends on ownership: does the stream manage the element lifecycle?
-    return () => {
-      // Example: Pause video on unmount if desirable
-      // videoElement?.pause();
-    };
-  }, [stream, stream.getVideoElement()]); // Re-run if the video element instance changes
-
-  // Render a placeholder video element
   return <video ref={videoRef} {...props} playsInline autoPlay muted />;
 }
 
 // --- State-based Components ---
 
 interface StateComponentProps {
-  children: React.ReactNode | ((payload: any) => React.ReactNode); // Allow render props
+  children: React.ReactNode | ((payload: any) => React.ReactNode);
 }
 
-function Connecting({ children }: StateComponentProps) {
+function Connecting({ children }: StateComponentProps): JSX.Element {
   const state = useStreamState();
-  if (state.status !== 'connecting') return null;
-  return typeof children === 'function' ? children(null) : <>{children}</>;
+  if (state.status !== 'connecting') return <></>;
+  return <>{typeof children === 'function' ? children(null) : children}</>;
 }
 
-function Streaming({ children }: StateComponentProps) {
+function Streaming({ children }: StateComponentProps): JSX.Element {
   const state = useStreamState();
-  if (state.status !== 'streaming') return null;
-  return typeof children === 'function' ? children(null) : <>{children}</>;
-}
-function Ended({ children }: StateComponentProps) {
-  const state = useStreamState();
-  if (state.status !== 'ended') return null;
-  return typeof children === 'function' ? children(null) : <>{children}</>;
+  if (state.status !== 'streaming') return <></>;
+  return <>{typeof children === 'function' ? children(null) : children}</>;
 }
 
-function StreamError({ children }: StateComponentProps) {
+function Ended({ children }: StateComponentProps): JSX.Element {
   const state = useStreamState();
-  if (state.status !== 'error') return null;
+  if (state.status !== 'ended') return <></>;
+  return <>{typeof children === 'function' ? children(null) : children}</>;
+}
+
+function StreamError({ children }: StateComponentProps): JSX.Element {
+  const state = useStreamState();
+  if (state.status !== 'error') return <></>;
   const error = { message: state.errorMessage }; // Create error-like object
-  return typeof children === 'function' ? children(error) : <>{children}</>;
+  return <>{typeof children === 'function' ? children(error) : children}</>;
 }
 
 // Factory function to create the context object
