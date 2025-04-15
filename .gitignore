@@ -50,4 +50,10 @@ temp/
 junit.xml
 
 # Logs
-*.log 
+*.log
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+*.dockerfile 

@@ -22,20 +22,21 @@
   },
   "dependencies": {
     "@open-game-system/stream-kit-types": "workspace:*",
-    "fast-json-patch": "^3.1.1"
-  },
-  "peerDependencies": {
-    "typescript": ">=4.5.0",
-    "puppeteer": "^22.0.0"
+    "fast-json-patch": "^3.1.1",
+    "install": "^0.13.0",
+    "peerjs": "^1.5.4",
+    "puppeteer": "22.13.1",
+    "puppeteer-stream": "3.0.20"
   },
   "devDependencies": {
-    "rimraf": "^5.0.0",
-    "tsup": "^8.0.0",
-    "typescript": "^5.4.5",
-    "vitest": "^1.6.0",
+    "@types/node": "^20.14.11",
+    "@types/peerjs": "^1.1.0",
+    "@types/ws": "^8.5.11",
     "@vitest/coverage-v8": "^1.6.0",
-    "@types/node": "^18.0.0",
-    "puppeteer": "^22.13.1"
+    "rimraf": "^5.0.0",
+    "tsup": "^8.0.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
   },
   "publishConfig": {
     "access": "public"
@@ -51,4 +52,4 @@
   ],
   "author": "OpenGameSystem",
   "license": "MIT"
-} 
+}
