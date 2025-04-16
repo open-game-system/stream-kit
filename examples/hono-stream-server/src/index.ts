@@ -1,116 +1,141 @@
 import { serve } from '@hono/node-server';
 import { Hono, type Context } from 'hono';
-import { createStreamKitRouter } from '@open-game-system/stream-kit-server';
-import { IncomingMessage, ServerResponse } from 'http';
+import { 
+  createStreamKitRouter, 
+  type StreamKitHooks, 
+  type StateChange 
+} from '@open-game-system/stream-kit-server';
+import { Stream } from 'stream';
+
+// --- Define App Environment & Stub Hooks ---
+
+// Define the environment our hooks might need (if any)
+// For this example, we'll use an empty object as we use in-memory storage.
+interface AppEnv {}
+const appEnv: AppEnv = {};
+
+// In-memory storage for stream states (Example implementation)
+const streamStates = new Map<string, unknown>();
+
+// Simple event emitter for state changes (Example implementation)
+// A real implementation might use Redis Pub/Sub, etc.
+import { EventEmitter } from 'events';
+const stateChangesEmitter = new EventEmitter();
+
+const stubStreamKitHooks: StreamKitHooks<AppEnv> = {
+  async saveStreamState({ streamId, state, env }) {
+    console.log(`[Stub Hook] Saving state for ${streamId}`);
+    streamStates.set(streamId, state);
+    stateChangesEmitter.emit(`change:${streamId}`, { type: 'snapshot', data: state, id: Date.now().toString() });
+  },
+
+  async loadStreamState({ streamId, env }) {
+    console.log(`[Stub Hook] Loading state for ${streamId}`);
+    return streamStates.get(streamId) ?? null;
+  },
+
+  async deleteStreamState({ streamId, env }) {
+    console.log(`[Stub Hook] Deleting state for ${streamId}`);
+    streamStates.delete(streamId);
+    stateChangesEmitter.emit(`change:${streamId}`, { type: 'snapshot', data: null, id: Date.now().toString() }); // Indicate deletion
+  },
+
+  async *subscribeToStateChanges({ streamId, env, lastEventId }){
+    console.log(`[Stub Hook] Subscribing to changes for ${streamId}, lastEventId: ${lastEventId}`);
+    // Yield current state immediately if requested (e.g., no lastEventId or specific logic)
+    const currentState = streamStates.get(streamId);
+    if (currentState && !lastEventId) { // Simple logic: send if no resume id
+      yield { type: 'snapshot', data: currentState, id: Date.now().toString() };
+    }
+
+    // Create a listener function for this specific subscription
+    let listener: ((change: StateChange) => void) | undefined = undefined;
+
+    // Use a ReadableStream to handle the event emitter listener registration and cleanup
+    const iterable = new ReadableStream<StateChange>({
+      start(controller) {
+        listener = (change) => {
+          try {
+            // Basic filtering example: don't send the event if its ID is <= lastEventId
+            if (!lastEventId || !change.id || parseInt(change.id) > parseInt(lastEventId)) {
+              controller.enqueue(change);
+            } else {
+              console.log(`[Stub Hook] Skipping event ${change.id} for ${streamId} due to lastEventId ${lastEventId}`);
+            }
+          } catch (e) {
+            console.error("[Stub Hook] Error enqueuing change:", e);
+            controller.error(e);
+            if (listener) { // Check if listener was assigned before trying to remove
+              stateChangesEmitter.off(`change:${streamId}`, listener);
+            }
+          }
+        };
+        stateChangesEmitter.on(`change:${streamId}`, listener);
+        console.log(`[Stub Hook] Added listener for ${streamId}`);
+      },
+      cancel(reason) {
+        console.log(`[Stub Hook] Subscription cancelled for ${streamId}. Reason:`, reason);
+        if (listener) { // Check if listener was assigned before trying to remove
+          stateChangesEmitter.off(`change:${streamId}`, listener);
+          console.log(`[Stub Hook] Removed listener for ${streamId}`);
+        }
+      }
+    });
+    
+    // Yield changes from the stream
+    const reader = iterable.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        yield value;
+      }
+    } finally {
+      reader.releaseLock();
+      console.log(`[Stub Hook] Finished yielding changes for ${streamId}`);
+      if (listener) { // Check if listener was assigned before trying to remove
+          stateChangesEmitter.off(`change:${streamId}`, listener);
+          console.log(`[Stub Hook] Removed listener for ${streamId} on finally`);
+        }
+    }
+  }
+};
+
+// --- Hono App Setup ---
 
 const app = new Hono();
-const STREAM_KIT_BASE_PATH = '/api/stream-kit';
+const STREAM_KIT_BASE_PATH = '/stream'; // Use the standard base path
 
-// Create the stream kit router
-const streamKitRouter = createStreamKitRouter({
-    peerjsHost: process.env.PEERJS_HOST,
-    peerjsPort: process.env.PEERJS_PORT ? parseInt(process.env.PEERJS_PORT, 10) : undefined,
-    peerjsPath: process.env.PEERJS_PATH,
-    peerjsSecure: process.env.PEERJS_SECURE !== 'false',
-    peerjsKey: process.env.PEERJS_KEY,
-    peerjsDebugLevel: process.env.PEERJS_DEBUG ? parseInt(process.env.PEERJS_DEBUG, 10) as 0 | 1 | 2 | 3 : 0,
+// Create the stream kit router using the new signature with hooks
+const streamKitRouterHandler = createStreamKitRouter<AppEnv>({
+  hooks: stubStreamKitHooks,
 });
 
-// Helper to convert Hono request to Node request
-function convertRequest(c: Context): IncomingMessage {
-    const req = c.req.raw;
-    // Add missing properties from IncomingMessage
-    Object.defineProperty(req, 'httpVersion', { value: '1.1' });
-    Object.defineProperty(req, 'httpVersionMajor', { value: 1 });
-    Object.defineProperty(req, 'httpVersionMinor', { value: 1 });
-    Object.defineProperty(req, 'socket', { value: null });
-    Object.defineProperty(req, 'connection', { value: null });
-    return req as unknown as IncomingMessage;
-}
+// Remove Hono-to-Node conversion helpers
 
-// Helper to create a Node response that writes back to Hono's response
-function createNodeResponse(c: Context): ServerResponse {
-    const res = new ServerResponse(convertRequest(c));
-    let body = '';
-    let statusCode = 200;
-    let headers: Record<string, string> = {};
-
-    // Override methods to capture response data
-    res.writeHead = function(code: number, responseHeaders?: any) {
-        statusCode = code;
-        if (responseHeaders) {
-            headers = { ...headers, ...responseHeaders };
-        }
-        return this;
-    };
-
-    res.write = function(chunk: any) {
-        if (chunk) {
-            body += chunk.toString();
-        }
-        return true;
-    };
-
-    res.end = function(chunk?: any) {
-        if (chunk) {
-            body += chunk.toString();
-        }
-        // Set the response on the Hono context
-        // Convert the status code to a valid Hono status code
-        c.status(statusCode as 200 | 201 | 204 | 400 | 401 | 403 | 404 | 409 | 500);
-        Object.entries(headers).forEach(([key, value]) => {
-            c.header(key, value);
-        });
-        c.body(body);
-        return this;
-    };
-
-    return res;
-}
-
-// Mount the stream kit routes
-app.post(`${STREAM_KIT_BASE_PATH}/start-stream`, async (c: Context) => {
-    const nodeReq = convertRequest(c);
-    const nodeRes = createNodeResponse(c);
-    await streamKitRouter.handleStartStream(nodeReq, nodeRes);
-    return c.res;
+// Route ALL requests starting with the base path to the stream kit handler
+app.all(`${STREAM_KIT_BASE_PATH}/*`, async (c: Context) => {
+  console.log(`Forwarding request to streamKitRouterHandler: ${c.req.method} ${c.req.url}`);
+  // Pass the Hono Request object and the app environment directly
+  return streamKitRouterHandler(c.req.raw, appEnv);
 });
 
-app.get(`${STREAM_KIT_BASE_PATH}/sessions`, async (c: Context) => {
-    const nodeReq = convertRequest(c);
-    const nodeRes = createNodeResponse(c);
-    await streamKitRouter.handleGetSessions(nodeReq, nodeRes);
-    return c.res;
-});
-
-app.delete(`${STREAM_KIT_BASE_PATH}/sessions/:sessionId`, async (c: Context) => {
-    const sessionId = c.req.param('sessionId');
-    const nodeReq = convertRequest(c);
-    const nodeRes = createNodeResponse(c);
-    await streamKitRouter.handleDeleteSession(nodeReq, nodeRes, sessionId);
-    return c.res;
-});
 
 // Start the server
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 console.log(`Server starting on port ${port}...`);
 
 serve({
-    fetch: app.fetch,
-    port
+  fetch: app.fetch,
+  port
 });
 
-// Handle cleanup on shutdown
-const cleanup = () => {
-    console.log('Shutting down...');
-    streamKitRouter.cleanup().then(() => {
-        console.log('Cleanup complete');
-        process.exit(0);
-    }).catch((error: Error) => {
-        console.error('Error during cleanup:', error);
-        process.exit(1);
-    });
-};
+// Remove legacy cleanup logic
+// Cleanup should be handled within hooks if necessary (e.g., closing DB connections)
+// process.on('SIGINT', cleanup);
+// process.on('SIGTERM', cleanup);
 
-process.on('SIGINT', cleanup);
-process.on('SIGTERM', cleanup);
+console.log(`Hono server listening on port ${port}`);
+console.log(`StreamKit endpoints available under ${STREAM_KIT_BASE_PATH}`);

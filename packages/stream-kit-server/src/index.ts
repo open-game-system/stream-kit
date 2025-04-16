@@ -9,7 +9,7 @@ import { EventEmitter } from 'events';
 
 // Placeholder types and options based on STREAM_KIT_SERVER_README_DRAFT.md
 
-export interface CreateStreamKitRouterOptions {
+interface CreateStreamKitRouterOptions {
   puppeteerLaunchOptions?: puppeteer.LaunchOptions;
   defaultViewport?: { width: number; height: number };
   validateRequest?: (req: IncomingMessage) => Promise<{
@@ -33,7 +33,7 @@ interface StartStreamPayload {
   sessionId: string;
 }
 
-export interface ActiveSession {
+interface ActiveSession {
   browser: Browser;
   page: Page;
   inputStream: Stream;
@@ -62,7 +62,7 @@ type PeerJsOptions = Pick<
   debug?: 0 | 1 | 2 | 3;
 };
 
-export interface StreamKitRouter {
+interface LegacyStreamKitRouter {
   handleStartStream: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleGetSessions: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   handleDeleteSession: (req: IncomingMessage, res: ServerResponse, sessionId: string) => Promise<void>;
@@ -72,13 +72,13 @@ export interface StreamKitRouter {
 // --- Router Creation Function ---
 
 /**
- * Creates a framework-agnostic router for managing WebRTC streaming sessions.
- * Can be used with any Node.js HTTP server framework (Express, Hono, Fastify, etc.)
- * by wrapping the handler functions appropriately.
+ * LEGACY: Creates a framework-agnostic router for managing WebRTC streaming sessions
+ * using Puppeteer and in-memory session management.
+ * @deprecated Use the new hook-based `createStreamKitRouter` instead.
  */
-export function createStreamKitRouter(
+function createLegacyStreamKitRouter(
   options: CreateStreamKitRouterOptions = {}
-): StreamKitRouter {
+): LegacyStreamKitRouter {
   const {
     sessionTimeout = 300000,
     puppeteerLaunchOptions = {},
@@ -420,3 +420,14 @@ const defaultStreamOptions = {
     frameRate: { ideal: 60 },
   },
 };
+
+// Export legacy components (renamed)
+export type { CreateStreamKitRouterOptions, LegacyStreamKitRouter, ActiveSession };
+export { createLegacyStreamKitRouter };
+
+// Export the new hook-based router components
+export type { StreamKitHooks } from "./types";
+export { createStreamKitRouter } from "./router";
+
+export * from './types';
+export * from './router';

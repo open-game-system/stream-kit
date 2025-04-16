@@ -1,190 +1,144 @@
 # @open-game-system/stream-kit-server
 
-Server-side implementation for the Open Game System (OGS) Cloud Rendering service.
+Server-side implementation for the Open Game System (OGS).
 
 ## Overview
 
-This package provides a router/middleware for managing headless browser instances that render game URLs and facilitate streaming their output via WebRTC. It handles:
+This package provides a hook-based router/middleware (`createStreamKitRouter`) for managing stream state persistence. By implementing `StreamKitHooks`, you can integrate with various storage backends (Redis, Cloudflare KV, etc.) to save, load, and delete stream state.
 
-- Session management and lifecycle
-- Headless browser instance control
-- WebRTC signaling and streaming
-- State synchronization via Server-Sent Events (SSE)
-- Input event handling
-- Resource cleanup and monitoring
+This package is designed to be used alongside other OGS components or custom logic that handles the actual browser automation (like Puppeteer) and WebRTC streaming.
 
 ## Installation
 
 ```bash
-npm install @open-game-system/stream-kit-server @open-game-system/stream-kit-types puppeteer fast-json-patch
+npm install @open-game-system/stream-kit-server @open-game-system/stream-kit-types
 # or
-pnpm add @open-game-system/stream-kit-server @open-game-system/stream-kit-types puppeteer fast-json-patch
+pnpm add @open-game-system/stream-kit-server @open-game-system/stream-kit-types
 # or
-yarn add @open-game-system/stream-kit-server @open-game-system/stream-kit-types puppeteer fast-json-patch
+yarn add @open-game-system/stream-kit-server @open-game-system/stream-kit-types
 ```
 
-## Usage
+**Requirements:**
 
-### Basic Example (Express.js)
+- For Puppeteer-based rendering, your server environment needs Google Chrome/Chromium and ffmpeg installed.
+- A Dockerfile setup will be required for production deployments. Documentation for this will be provided separately.
+- For the hook-based router, install the necessary client library for your chosen storage (e.g., `ioredis`).
 
-```typescript
-import express from 'express';
-import { createStreamKitRouter } from '@open-game-system/stream-kit-server';
-import http from 'http';
+## Usage (Hook-Based Architecture)
 
-const app = express();
-const server = http.createServer(app);
+The core idea is to implement storage interactions via hooks and pass them to the `createStreamKitRouter` factory.
 
-// Create the Stream Kit Router
-const streamKitRouter = createStreamKitRouter({
-  // Optional: Override Puppeteer launch options
-  puppeteerLaunchOptions: {
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  },
-  // Optional: Add custom authentication/validation
-  validateRequest: async (req) => {
-    const authToken = req.headers.authorization?.split(' ')[1];
-    if (!authToken) {
-      return { authorized: false, error: 'Unauthorized', status: 401 };
-    }
-    return { authorized: true };
-  }
-});
+### Example: Using Redis for Storage (Node.js/Bun)
 
-// Mount the router at /stream
-app.use('/stream', streamKitRouter);
-
-server.listen(3000, () => {
-  console.log('Stream Kit Server running on http://localhost:3000');
-});
-
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received: closing HTTP server');
-  server.close(() => {
-    console.log('HTTP server closed');
-  });
-});
-```
-
-### Advanced Example (with Environment & Custom Hooks)
+1. **Define Environment/Context:**
 
 ```typescript
-interface AppEnv {
-  PUPPETEER_EXECUTABLE_PATH?: string;
-  AUTH_SECRET: string;
-  REDIS_URL: string;
+// src/redis-client.ts
+import Redis from "ioredis";
+
+const redisClient = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
+
+export default redisClient;
+
+export interface AppEnv {
+  redis: Redis.Redis;
 }
+```
 
+2. **Implement Storage Hooks:**
+
+```typescript
+// src/streamkit-hooks-redis.ts
+import type { StreamKitHooks } from "@open-game-collective/stream-kit-server";
+import type { AppEnv } from "./redis-client";
+import redisClient from "./redis-client";
+
+const getStreamKey = (streamId: string) => `stream:${streamId}:state`;
+
+export const redisStreamKitHooks: StreamKitHooks<AppEnv> = {
+  async saveStreamState({ streamId, state, env }) {
+    const redis = redisClient;
+    await redis.set(getStreamKey(streamId), JSON.stringify(state));
+  },
+
+  async loadStreamState({ streamId, env }) {
+    const redis = redisClient;
+    const stateJson = await redis.get(getStreamKey(streamId));
+    return stateJson ? JSON.parse(stateJson) : null;
+  },
+
+  async deleteStreamState({ streamId, env }) {
+    const redis = redisClient;
+    await redis.del(getStreamKey(streamId));
+  },
+
+  async *subscribeToStateChanges({ streamId, env, lastEventId }) {
+    // Implement your state change subscription logic here
+    // This could use Redis pub/sub, WebSocket connections, etc.
+    // Must yield StateChange objects: { type: 'patch' | 'snapshot', data: unknown, id?: string }
+  }
+};
+```
+
+3. **Integrate Router:**
+
+```typescript
+// src/server.ts
+import { createStreamKitRouter } from "@open-game-collective/stream-kit-server";
+import { redisStreamKitHooks } from "./streamkit-hooks-redis";
+import redisClient from "./redis-client";
+
+// Create router with hooks
+const streamRouterHandler = createStreamKitRouter<AppEnv>({
+  hooks: redisStreamKitHooks
+});
+
+// Create environment object that includes storage
 const env: AppEnv = {
-  PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH,
-  AUTH_SECRET: process.env.AUTH_SECRET!,
-  REDIS_URL: process.env.REDIS_URL!
+  redis: redisClient
 };
 
-const streamKitRouter = createStreamKitRouter<AppEnv>({
-  // Pass environment to hooks
-  getEnv: () => env,
-  
-  // Custom validation with caller context
-  validateRequest: async (req) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return { authorized: false, error: 'Unauthorized', status: 401 };
+// Set up server (example using Bun)
+Bun.serve({
+  port: 3000,
+  async fetch(request: Request) {
+    const url = new URL(request.url);
+
+    if (url.pathname.startsWith("/stream/")) {
+      return streamRouterHandler(request, env);
     }
-    const decoded = await verifyToken(token, env.AUTH_SECRET);
-    return {
-      authorized: true,
-      callerContext: { userId: decoded.sub, role: decoded.role }
-    };
+
+    return new Response("Not Found", { status: 404 });
   },
-  
-  // Custom error handling
-  onError: (error, streamId) => {
-    console.error(`Stream ${streamId} error:`, error);
-    // Report to error tracking service
-  },
-  
-  // Performance tuning
-  stateUpdateInterval: 50, // More frequent updates (ms)
-  sessionTimeout: 600000, // 10 minute timeout
 });
 ```
 
 ## API Reference
 
-### Router Factory
+### `createStreamKitRouter<TEnv>(config)`
 
-```typescript
-function createStreamKitRouter<TEnv = any>(options?: {
-  basePath?: string;
-  puppeteerLaunchOptions?: PuppeteerLaunchOptions;
-  defaultViewport?: { width: number; height: number };
-  getEnv?: () => TEnv | Promise<TEnv>;
-  validateRequest?: (req: Request) => Promise<{
-    authorized: boolean;
-    error?: string;
-    status?: number;
-    callerContext?: Record<string, any>;
-  }>;
-  stateUpdateInterval?: number;
-  sessionTimeout?: number;
-  onError?: (error: Error, streamId?: string) => void;
-}): RequestHandler;
-```
+Creates a request handler function suitable for environments like Cloudflare Workers, Node.js, Deno, or Bun.
 
-### Protocol Details
+- `config`: Configuration object
+  - `hooks: StreamKitHooks<TEnv>`: Required. An object containing your implementations of the storage interaction hooks.
+- Returns: `(request: Request, env: TEnv) => Promise<Response>`
 
-#### Session Initiation
+**Endpoints:**
 
-```http
-POST /stream
-Content-Type: application/json
-Authorization: Bearer <token>
+- `GET /stream/:streamId`: Loads stream state
+- `GET /stream/:streamId/sse`: Server-Sent Events for state changes
+- `POST /stream/:streamId`: Saves stream state (expects JSON body)
+- `DELETE /stream/:streamId`: Deletes stream state
 
-{
-  "targetUrl": "https://your-game.com/render/scene",
-  "initialData": { "userId": "user-123" },
-  "renderOptions": {
-    "resolution": "1920x1080"
-  }
-}
-```
+### `StreamKitHooks<TEnv>` Interface
 
-Response:
-```json
-{
-  "streamId": "uuid-generated-by-server",
-  "initialState": {
-    "status": "initializing",
-    // ... other state fields
-  }
-}
-```
+This interface defines the required functions for handling storage operations:
 
-#### State Synchronization (SSE)
-
-```http
-GET /stream/{streamId}/sse
-Accept: text/event-stream
-Authorization: Bearer <token>
-```
-
-Stream:
-```
-event: state_patch
-data: [{"op": "replace", "path": "/status", "value": "streaming"}]
-
-event: state_patch
-data: [{"op": "add", "path": "/metadata/latency", "value": 75}]
-```
-
-## Related Packages
-
-- `@open-game-system/stream-kit-web`: Core client implementation
-- `@open-game-system/stream-kit-react`: React components and hooks
-- `@open-game-system/stream-kit-types`: TypeScript type definitions
+- `saveStreamState(params: { streamId: string; state: unknown; env: TEnv }): Promise<void>`
+- `loadStreamState(params: { streamId: string; env: TEnv }): Promise<unknown | null>`
+- `deleteStreamState(params: { streamId: string; env: TEnv }): Promise<void>`
+- `subscribeToStateChanges(params: { streamId: string; env: TEnv; lastEventId?: string }): AsyncIterable<StateChange>`
 
 ## License
 
-MIT License 
+MIT License

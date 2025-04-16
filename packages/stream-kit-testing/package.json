@@ -17,11 +17,11 @@
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^8.30.1",
     "@typescript-eslint/parser": "^8.30.1",
-    "@vitest/browser": "^1.0.0",
+    "@vitest/browser": "^1.6.1",
     "eslint": "^8.57.1",
     "jsdom": "^24.0.0",
     "typescript": "^5.0.0",
-    "vitest": "^1.0.0"
+    "vitest": "^1.6.0"
   },
   "peerDependencies": {
     "@open-game-system/stream-kit-web": "workspace:*"

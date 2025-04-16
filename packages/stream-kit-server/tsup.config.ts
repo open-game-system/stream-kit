@@ -2,14 +2,21 @@ import { defineConfig } from 'tsup';
 
 export default defineConfig({
   entry: ['src/index.ts'],
-  format: ['cjs', 'esm'], // Server might primarily use CJS
-  dts: { resolve: true },
+  format: ['cjs', 'esm'],
   splitting: false,
   sourcemap: true,
-  clean: true,
+  clean: false,
+  target: 'node18',
+  platform: 'node',
+  treeshake: true,
+  dts: false,
   external: [
     '@open-game-system/stream-kit-types',
-    'puppeteer', // Mark peer dependencies as external
-    'fast-json-patch'
+    'puppeteer',
+    'puppeteer-stream',
+    'peerjs',
+    'events',
+    'http'
   ],
+  noExternal: ['fast-json-patch']
 }); 
