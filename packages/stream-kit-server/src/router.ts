@@ -78,8 +78,14 @@ export function createStreamKitRouter<TEnv>(config: {
                   })) {
                     sendEvent(change);
                   }
+
+                  // If we get here, the subscription has ended normally
+                  controller.close();
                 } catch (error) {
                   console.error(`[SSE Error] Stream ${streamId}:`, error);
+                  // Send error message before closing
+                  const errorMessage = `data: ${JSON.stringify({ error: 'Stream terminated due to error' })}\n\n`;
+                  controller.enqueue(new TextEncoder().encode(errorMessage));
                   controller.close();
                 }
               },
@@ -113,7 +119,12 @@ export function createStreamKitRouter<TEnv>(config: {
           if (!request.body) {
             return new Response("Request body required for saving state", { status: 400 });
           }
-          const state: unknown = await request.json();
+          let state: unknown;
+          try {
+            state = await request.json();
+          } catch (error) {
+            return new Response("Invalid JSON in request body", { status: 400 });
+          }
           await hooks.saveStreamState({ streamId, state, env });
           return new Response("Stream state saved", { status: 200 });
         }
