@@ -71,10 +71,6 @@ export class MyContainer implements DurableObject {
     private readonly env: Env
   ) {
     ctx.blockConcurrencyWhile(async () => {
-      console.log("concurrency");
-      console.log("concurrency");
-      console.log("concurrency", ctx);
-      console.log("concurrency", ctx);
       const container = ctx.container;
       if (!container) {
         throw new Error("Container is not available");
