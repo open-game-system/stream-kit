@@ -40,6 +40,8 @@ function App() {
     </StreamProvider>
   );
 }
+
+> **Note:** The StreamCanvas component uses PeerJS for WebRTC signaling, which connects to the default PeerJS server automatically. No additional configuration is needed for development and testing purposes. For production environments, you may want to set up your own PeerJS server.
 ```
 
 ## Components

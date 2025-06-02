@@ -86,7 +86,9 @@ The container runs:
 - Bun for the server runtime
 - Puppeteer for browser automation
 - Chrome/Chromium for page rendering
-- WebRTC for streaming
+- WebRTC for streaming with PeerJS
+
+The included browser extension uses the default PeerJS server for WebRTC signaling, so no additional configuration is needed to establish peer connections. This is suitable for development and testing environments. For production deployments, you may want to configure a custom PeerJS server for better reliability and control.
 
 ## Environment Variables
 

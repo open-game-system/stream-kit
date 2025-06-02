@@ -52,11 +52,8 @@ junit.xml
 # Logs
 *.log
 
-# Docker
-Dockerfile
-.dockerignore
-docker-compose.yml
-*.dockerfile 
-
 # Wrangler
 .wrangler/
+
+# LLM context docs
+.llms

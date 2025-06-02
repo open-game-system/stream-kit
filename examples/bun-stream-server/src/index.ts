@@ -36,8 +36,23 @@ async function startAndWaitForPort(
   );
 }
 
+async function waitForLocalhost(port: number, maxTries = 10) {
+  for (let i = 0; i < maxTries; i++) {
+    try {
+      await fetch(`http://localhost:${port}/ping`);
+      return;
+    } catch (err: any) {
+      console.error("Error connecting to localhost on", i, "try", err);
+      await new Promise((res) => setTimeout(res, 300));
+    }
+  }
+  throw new Error(
+    `could not connect to localhost:${port} after ${maxTries} tries`
+  );
+}
+
 async function proxyFetch(
-  container: any,
+  container: Container,
   request: Request,
   portNumber: number
 ): Promise<Response> {
@@ -52,9 +67,7 @@ async function proxyFetch(
 }
 
 function createJsonResponse(data: unknown, init?: ResponseInit): Response {
-  // Convert data to string first
   const jsonString = JSON.stringify(data);
-  // Create response with explicit headers
   return new Response(jsonString, {
     ...init,
     headers: {
@@ -71,27 +84,40 @@ export class MyContainer implements DurableObject {
     private readonly env: Env
   ) {
     ctx.blockConcurrencyWhile(async () => {
-      const container = ctx.container;
-      if (!container) {
-        throw new Error("Container is not available");
+      if (!ctx.container) {
+        // No container available, wait for localhost to be available
+        console.log("No container binding found, using localhost:8080");
+        await waitForLocalhost(OPEN_CONTAINER_PORT);
+      } else {
+        // Container available, start and wait for it
+        console.log("Container binding found, starting container");
+        await startAndWaitForPort(ctx.container, OPEN_CONTAINER_PORT);
       }
-      await startAndWaitForPort(container, OPEN_CONTAINER_PORT);
     });
   }
 
   async fetch(request: Request): Promise<Response> {
     try {
       if (!this.ctx.container) {
-        throw new Error("Container is not available");
+        // No container, proxy to localhost:8080
+        const localUrl = request.url.replace(new URL(request.url).origin, 'http://localhost:8080');
+        const response = await fetch(localUrl, {
+          method: request.method,
+          headers: request.headers,
+          body: request.body,
+        });
+        return response;
+      } else {
+        // Use the container
+        return await proxyFetch(
+          this.ctx.container,
+          request,
+          OPEN_CONTAINER_PORT
+        );
       }
-      return await proxyFetch(
-        this.ctx.container,
-        request,
-        OPEN_CONTAINER_PORT
-      );
     } catch (error) {
       return createJsonResponse(
-        { error: "Container error: " + (error as Error).message },
+        { error: (!this.ctx.container ? "Local server" : "Container") + " error: " + (error as Error).message },
         { status: 500 }
       );
     }
@@ -104,25 +130,9 @@ export default {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    if (
-      pathname.startsWith("/stream") ||
-      pathname === "/health" ||
-      pathname === "/test-puppeteer"
-    ) {
-      const id = env.MY_CONTAINER.idFromName(pathname);
-      const stub = env.MY_CONTAINER.get(id);
-      return await stub.fetch(request);
-    }
-
-    return createJsonResponse({
-      message: "Stream Server Worker",
-      endpoints: [
-        "GET /health",
-        "POST /stream",
-        "GET /stream/:id",
-        "DELETE /stream/:id",
-        "GET /test-puppeteer",
-      ],
-    });
+    // Always route through Durable Objects
+    const id = env.MY_CONTAINER.idFromName(pathname);
+    const stub = env.MY_CONTAINER.get(id);
+    return await stub.fetch(request);
   },
 };

@@ -69,6 +69,8 @@ stream.send({
 stream.destroy();
 ```
 
+> **Note:** Stream Kit uses PeerJS for WebRTC signaling, which automatically connects to the default PeerJS server. For development and testing, you don't need to configure a custom PeerJS server. For production environments, you may want to set up your own PeerJS server for better reliability and control.
+
 ### Advanced Usage
 
 #### Custom WebRTC Configuration
@@ -98,7 +100,6 @@ await stream.update({
   }
 });
 ```
-
 #### Error Handling
 
 ```typescript

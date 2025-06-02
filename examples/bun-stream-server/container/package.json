@@ -8,10 +8,10 @@
     "dev": "tsx watch src/server.ts"
   },
   "dependencies": {
-    "puppeteer": "^21.0.0"
+    "puppeteer-core": "^24.9.0"
   },
   "devDependencies": {
     "tsx": "^4.7.1",
     "typescript": "^5.0.0"
   }
-} 
+}
