@@ -131,37 +131,348 @@ async function INITIALIZE({ srcPeerId, destPeerId }) {
   console.log(`[INITIALIZE] Current activeConnections size:`, window.activeConnections.size);
   
   try {
-    // Capture the current tab's video and audio
-    console.log(`[TAB_CAPTURE] Starting tab capture...`);
+    // First, find and activate the target tab to satisfy activeTab permission
+    console.log(`[TAB_ACTIVATION] Finding target tab to activate extension...`);
+    
+    const tabs = await new Promise((resolve, reject) => {
+      chrome.tabs.query({}, (tabs) => {
+        if (chrome.runtime.lastError) {
+          console.error(`[TAB_ACTIVATION] ❌ Failed to query tabs:`, chrome.runtime.lastError);
+          reject(new Error(`Failed to query tabs: ${chrome.runtime.lastError.message}`));
+          return;
+        }
+        console.log(`[TAB_ACTIVATION] Found ${tabs.length} tabs`);
+        tabs.forEach((tab, index) => {
+          console.log(`[TAB_ACTIVATION] Tab ${index}: ${tab.url} (active: ${tab.active}, id: ${tab.id})`);
+        });
+        resolve(tabs);
+      });
+    });
+    
+    // Find the active tab (the one Puppeteer is controlling)
+    const activeTab = tabs.find(tab => tab.active) || tabs.find(tab => !tab.url.startsWith('chrome-extension://'));
+    
+    if (!activeTab) {
+      throw new Error('No suitable target tab found for capture');
+    }
+    
+    console.log(`[TAB_ACTIVATION] Selected target tab: ${activeTab.url} (id: ${activeTab.id})`);
+    
+    // Programmatically activate the extension for this tab by injecting a small script
+    // This satisfies the activeTab permission requirement
+    console.log(`[TAB_ACTIVATION] Activating extension for tab ${activeTab.id}...`);
+    
+    try {
+      await new Promise((resolve, reject) => {
+        chrome.scripting.executeScript({
+          target: { tabId: activeTab.id },
+          func: () => {
+            // This script injection activates the extension for this tab
+            console.log('[TAB_INJECTION] Extension activated for this tab');
+            return true;
+          }
+        }, (results) => {
+          if (chrome.runtime.lastError) {
+            console.warn(`[TAB_ACTIVATION] ⚠️ Script injection failed (may be normal for some pages):`, chrome.runtime.lastError.message);
+            // Don't reject - some pages can't be injected into, but tabCapture might still work
+            resolve();
+          } else {
+            console.log(`[TAB_ACTIVATION] ✅ Successfully activated extension for tab`);
+            resolve();
+          }
+        });
+      });
+    } catch (activationError) {
+      console.warn(`[TAB_ACTIVATION] ⚠️ Extension activation failed, proceeding anyway:`, activationError.message);
+      // Continue - tabCapture might still work even without successful injection
+    }
+    
+    // Now attempt tab capture
+    console.log(`[TAB_CAPTURE] Starting tab capture for tab ${activeTab.id}...`);
     console.log(`[TAB_CAPTURE] chrome object available:`, typeof chrome !== 'undefined');
     console.log(`[TAB_CAPTURE] chrome.tabCapture available:`, typeof chrome !== 'undefined' && typeof chrome.tabCapture !== 'undefined');
     
-    const stream = await new Promise((resolve, reject) => {
-      chrome.tabCapture.capture(
-        { video: true, audio: true },
-        (capturedStream) => {
-          if (capturedStream) {
-            console.log(`[TAB_CAPTURE] ✅ Successfully captured tab stream`);
-            console.log(`[TAB_CAPTURE] Stream has ${capturedStream.getTracks().length} tracks`);
-            capturedStream.getTracks().forEach((track, index) => {
-              console.log(`[TAB_CAPTURE] Track ${index}: ${track.kind} - ${track.label} - enabled: ${track.enabled}`);
+         // Preflight: stop any previous capture to avoid "Cannot capture a tab with an active stream"
+     try {
+       if (window.currentCaptureStream) {
+         console.log('[TAB_CAPTURE] Found previous capture stream, stopping it...');
+         window.currentCaptureStream.getTracks().forEach(t => t.stop());
+         window.currentCaptureStream = null;
+       }
+     } catch (e) {
+       console.warn('[TAB_CAPTURE] Preflight stop error:', e && e.message);
+     }
+
+           let stream;
+
+      // Wait until no active capture is registered for this tab
+      async function waitForNoActiveCapture(tabId, maxTries = 20, delayMs = 100) {
+        for (let i = 0; i < maxTries; i++) {
+          const { anyActive, tabsSnapshot } = await new Promise((res) => {
+            chrome.tabCapture.getCapturedTabs((tabs) => {
+              try {
+                const list = (tabs || []).map(t => ({ tabId: t.tabId, status: t.status, fullscreen: t.fullscreen }));
+                const active = list.some(t => t.status === 'active' && t.tabId === tabId);
+                console.log('[TAB_CAPTURE] Poll', i + 1, '/', maxTries, 'captured tabs:', list);
+                res({ anyActive: active, tabsSnapshot: list });
+              } catch (e) {
+                console.warn('[TAB_CAPTURE] getCapturedTabs inspect error:', e && e.message);
+                res({ anyActive: false, tabsSnapshot: [] });
+              }
             });
-            resolve(capturedStream);
-          } else {
-            const error = chrome.runtime.lastError;
-            console.error(`[TAB_CAPTURE] ❌ Failed to capture tab`);
-            console.error(`[TAB_CAPTURE] chrome.runtime.lastError:`, error);
-            reject(new Error(`Failed to capture the tab: ${error ? error.message : 'Unknown error'}`));
-          }
+          });
+          if (!anyActive) return;
+          await new Promise(r => setTimeout(r, delayMs));
         }
-      );
+        console.warn('[TAB_CAPTURE] Still active after wait; proceeding anyway');
+      }
+
+      await waitForNoActiveCapture(activeTab.id);
+
+    // First try standard tabCapture.capture
+    try {
+      console.log('[TAB_CAPTURE] About to call chrome.tabCapture.capture synchronously');
+      console.log('[TAB_CAPTURE] Chrome tabCapture API available:', typeof chrome.tabCapture !== 'undefined');
+      console.log('[TAB_CAPTURE] Extension context check:', {
+        hasChrome: typeof chrome !== 'undefined',
+        hasTabCapture: typeof chrome !== 'undefined' && typeof chrome.tabCapture !== 'undefined',
+        hasActiveTab: typeof chrome !== 'undefined' && typeof chrome.activeTab !== 'undefined',
+        extensionId: chrome.runtime?.id || 'unknown'
+      });
+      
+      stream = await new Promise((resolve, reject) => {
+        console.log(`[TAB_CAPTURE] Attempting tabCapture.capture on active tab...`);
+        console.log(`[TAB_CAPTURE] Target tab ID: ${activeTab.id}, URL: ${activeTab.url}`);
+        
+        chrome.tabCapture.capture(
+          { 
+            video: true, 
+            audio: true,
+            videoConstraints: {
+              mandatory: {
+                minWidth: 1280,
+                minHeight: 720,
+                maxWidth: 1920,
+                maxHeight: 1080,
+                maxFrameRate: 30
+              }
+            }
+          },
+          (capturedStream) => {
+            if (capturedStream) {
+              console.log(`[TAB_CAPTURE] ✅ capture() returned a stream`);
+              console.log(`[TAB_CAPTURE] Stream details:`, {
+                id: capturedStream.id,
+                active: capturedStream.active,
+                tracks: capturedStream.getTracks().length,
+                videoTracks: capturedStream.getVideoTracks().length,
+                audioTracks: capturedStream.getAudioTracks().length
+              });
+              resolve(capturedStream);
+            } else {
+              const error = chrome.runtime.lastError;
+              console.warn(`[TAB_CAPTURE] capture() failed:`, error && error.message);
+              console.warn(`[TAB_CAPTURE] Last error details:`, {
+                message: error?.message,
+                stack: error?.stack,
+                toString: error?.toString()
+              });
+              reject(new Error(error ? error.message : 'Unknown capture error'));
+            }
+          }
+        );
+      });
+    } catch (capErr) {
+      console.warn(`[TAB_CAPTURE] capture() failed, falling back to getMediaStreamId + getUserMedia:`, capErr.message);
+
+      // Fallback: getMediaStreamId + getUserMedia with Chrome-specific constraints
+      const streamId = await new Promise((resolve, reject) => {
+        try {
+          // targetTabId may not be supported on all channels; try with and without
+          const opts = { targetTabId: activeTab.id };
+          console.log(`[TAB_CAPTURE] Requesting media stream id for tab ${activeTab.id}...`);
+          chrome.tabCapture.getMediaStreamId(opts, (id) => {
+            if (chrome.runtime.lastError || !id) {
+              const err1 = chrome.runtime.lastError && chrome.runtime.lastError.message;
+              console.warn(`[TAB_CAPTURE] getMediaStreamId with targetTabId failed:`, err1);
+              chrome.tabCapture.getMediaStreamId((id2) => {
+                if (chrome.runtime.lastError || !id2) {
+                  const err2 = chrome.runtime.lastError && chrome.runtime.lastError.message;
+                  reject(new Error(err2 || 'Failed to obtain mediaStreamId'));
+                } else {
+                  resolve(id2);
+                }
+              });
+            } else {
+              resolve(id);
+            }
+          });
+        } catch (e) {
+          reject(e);
+        }
+      });
+
+      console.log(`[TAB_CAPTURE] Obtained mediaStreamId: ${streamId}`);
+
+      try {
+        // @ts-ignore chrome-specific constraints
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            mandatory: {
+              chromeMediaSource: 'tab',
+              chromeMediaSourceId: streamId,
+            }
+          },
+          video: {
+            mandatory: {
+              chromeMediaSource: 'tab',
+              chromeMediaSourceId: streamId,
+              maxWidth: 1920,
+              maxHeight: 1080,
+              maxFrameRate: 30
+            }
+          }
+        });
+        console.log(`[TAB_CAPTURE] ✅ getUserMedia returned a stream`);
+      } catch (gumErr) {
+        console.error(`[TAB_CAPTURE] ❌ getUserMedia with tab source failed:`, gumErr);
+        throw new Error(`Failed to capture the tab: ${gumErr.message}`);
+      }
+    }
+
+    // At this point we have a valid stream
+    console.log(`[TAB_CAPTURE] Stream has ${stream.getTracks().length} tracks`);
+    
+    // Enhanced stream debugging
+    stream.getTracks().forEach((track, index) => {
+      console.log(`[TAB_CAPTURE] Track ${index}:`, {
+        kind: track.kind,
+        label: track.label,
+        enabled: track.enabled,
+        readyState: track.readyState,
+        muted: track.muted,
+        constraints: track.getConstraints ? track.getConstraints() : 'N/A',
+        settings: track.getSettings ? track.getSettings() : 'N/A'
+      });
     });
+    
+    // Test if the stream is actually producing data
+    if (stream.getVideoTracks().length > 0) {
+      const videoTrack = stream.getVideoTracks()[0];
+      const videoSettings = videoTrack.getSettings();
+      const videoConstraints = videoTrack.getConstraints ? videoTrack.getConstraints() : null;
+      
+      console.log('[TAB_CAPTURE] Video track details:', {
+        width: videoSettings.width,
+        height: videoSettings.height,
+        frameRate: videoSettings.frameRate,
+        deviceId: videoSettings.deviceId,
+        aspectRatio: videoSettings.aspectRatio,
+        facingMode: videoSettings.facingMode,
+        resizeMode: videoSettings.resizeMode,
+        allSettings: videoSettings,
+        constraints: videoConstraints
+      });
+      
+      // Check if dimensions are 0 which indicates capture failure
+      if (videoSettings.width === 0 || videoSettings.height === 0) {
+        console.error('[TAB_CAPTURE] ❌ Video track has zero dimensions - capture likely failed!');
+        console.error('[TAB_CAPTURE] This usually means:');
+        console.error('[TAB_CAPTURE] 1. Tab content is not being rendered (headless browser issue)');
+        console.error('[TAB_CAPTURE] 2. Extension permissions not properly granted');
+        console.error('[TAB_CAPTURE] 3. Chrome tab capture API not working in this environment');
+      }
+      
+      // Create a test video element to verify the stream works
+      try {
+        const testVideo = document.createElement('video');
+        testVideo.srcObject = stream;
+        testVideo.muted = true; // Required for autoplay
+        
+        testVideo.onloadedmetadata = () => {
+          console.log('[TAB_CAPTURE] Test video metadata loaded:', JSON.stringify({
+            videoWidth: testVideo.videoWidth,
+            videoHeight: testVideo.videoHeight,
+            duration: testVideo.duration,
+            readyState: testVideo.readyState,
+            networkState: testVideo.networkState
+          }));
+          
+          // Try to play the video to see if it actually has content
+          testVideo.play().then(() => {
+            console.log('[TAB_CAPTURE] ✅ Test video can play');
+            
+            // Check if video is actually updating by sampling pixels
+            setTimeout(() => {
+              try {
+                const canvas = document.createElement('canvas');
+                canvas.width = testVideo.videoWidth || 100;
+                canvas.height = testVideo.videoHeight || 100;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(testVideo, 0, 0);
+                const imageData = ctx.getImageData(0, 0, 10, 10);
+                const hasNonZeroPixels = imageData.data.some(pixel => pixel > 0);
+                console.log('[TAB_CAPTURE] Video width:', testVideo.videoWidth);
+                console.log('[TAB_CAPTURE] Video height:', testVideo.videoHeight);
+                console.log('[TAB_CAPTURE] Video has non-zero pixels:', hasNonZeroPixels);
+                console.log('[TAB_CAPTURE] Sample pixel data:', Array.from(imageData.data.slice(0, 20)));
+              } catch (canvasErr) {
+                console.warn('[TAB_CAPTURE] Could not sample video pixels:', canvasErr);
+              }
+            }, 1000);
+            
+          }).catch((playErr) => {
+            console.error('[TAB_CAPTURE] Test video play failed:', playErr);
+          });
+        };
+        
+        testVideo.onerror = (e) => {
+          console.error('[TAB_CAPTURE] Test video error:', e);
+          console.error('[TAB_CAPTURE] Video error details:', testVideo.error);
+        };
+        
+        testVideo.onwaiting = () => {
+          console.log('[TAB_CAPTURE] Test video waiting for data...');
+        };
+        
+        testVideo.onstalled = () => {
+          console.log('[TAB_CAPTURE] Test video stalled');
+        };
+        
+      } catch (testErr) {
+        console.warn('[TAB_CAPTURE] Could not create test video element:', testErr);
+      }
+    } else {
+      console.error('[TAB_CAPTURE] ❌ No video tracks in stream!');
+    }
+    
+    // Store globally to detect active capture on subsequent init calls
+    try {
+      window.currentCaptureStream = stream;
+      console.log('[TAB_CAPTURE] currentCaptureStream set');
+      stream.getTracks().forEach((track, index) => {
+        track.onended = () => {
+          console.log('[TAB_CAPTURE] Track ended:', track.kind, track.label);
+          const allEnded = !window.currentCaptureStream || window.currentCaptureStream.getTracks().every(t => t.readyState === 'ended');
+          if (allEnded) {
+            console.log('[TAB_CAPTURE] All tracks ended, clearing currentCaptureStream');
+            window.currentCaptureStream = null;
+          }
+        };
+      });
+    } catch (e) {
+      console.warn('[TAB_CAPTURE] Could not set global capture stream:', e && e.message);
+    }
 
     // Create PeerJS peer with our assigned ID
     console.log(`[PEERJS] Creating peer with ID: "${srcPeerId}"`);
     console.log(`[PEERJS] Peer constructor available:`, typeof Peer !== 'undefined');
     
-    const peer = new Peer(srcPeerId);
+    const peer = new Peer(srcPeerId, {
+      config: {
+        debug: 3,
+      }
+    });
     console.log(`[PEERJS] Peer object created:`, peer);
     
     // Wait for peer to connect to PeerJS signaling server

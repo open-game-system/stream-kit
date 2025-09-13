@@ -1,34 +1,62 @@
-# Use Bun as base image
-FROM oven/bun:1 as base
+# Use Debian ARM64 which has the actual Chromium binary (not a snap wrapper)
+FROM --platform=linux/arm64 debian:bullseye-slim
 
-# We don't need the standalone Chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD true
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Chromium browser (arm64-compatible) and dependencies
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        chromium \
-        fonts-liberation \
-        libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 \
-        libcups2 libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 \
-        libnspr4 libnss3 libxcomposite1 libxdamage1 libxfixes3 \
-        libxkbcommon0 libxrandr2 xdg-utils \
+# Install Node.js and necessary dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    gnupg \
+    wget \
+    unzip \
+    ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs
+
+# Install Chromium and dependencies for ARM64
+RUN apt-get update && apt-get install -y \
+    chromium \
+    chromium-driver \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libatspi2.0-0 \
+    libdrm2 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
+# Set Chromium path for Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Mark that we're running in Docker for Chrome configuration
+ENV DOCKER_ENVIRONMENT=true
+
+# Install tsx for TypeScript execution
+RUN npm install -g tsx
+
+# Set working directory
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
+COPY package*.json ./
 
-# Install dependencies (puppeteer-core doesn't download Chromium)
-RUN bun install
+# Install dependencies
+RUN npm ci
 
-# Copy source
+# Copy source and extension
 COPY . .
 
-# Set environment variable to use system Chrome
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-
-# Run the app
+# Run the app using tsx to handle TypeScript
 EXPOSE 8080
-CMD ["bun", "run", "src/server.ts"] 
+# Expose UDP port range for WebRTC media connections
+EXPOSE 40000-40100/udp
+CMD ["tsx", "src/server.ts"] 

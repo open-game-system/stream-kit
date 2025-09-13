@@ -13,12 +13,30 @@
  * 5. Screen capture and streaming begins
  */
 
-chrome.tabs.create(
-  {
-    active: false, // Hidden tab - user doesn't need to see it
-    url: `chrome-extension://${chrome.runtime.id}/streaming.html`,
-  },
-  (tab) => {
-    console.log('[Background] Created streaming tab:', tab.id);
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('streaming.html'), active: false });
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('streaming.html'), active: false });
+});
+
+chrome.commands.onCommand.addListener(async (command) => {
+  console.log('[BACKGROUND] Command received:', command);
+  if (command === 'start-capture') {
+    // Focus the target tab (current active in current window)
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      console.log('[BACKGROUND] Active tab for capture:', tab && { id: tab.id, url: tab.url });
+      if (tab && tab.id) {
+        // Send a message to the streaming page to start capture immediately
+        // Broadcast to all extension contexts; streaming.html listens on runtime.onMessage
+        chrome.runtime.sendMessage({ type: 'START_CAPTURE', targetTabId: tab.id });
+        console.log('[BACKGROUND] START_CAPTURE runtime message sent');
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[BACKGROUND] start-capture error:', e && e.message);
+    }
   }
-);
+});

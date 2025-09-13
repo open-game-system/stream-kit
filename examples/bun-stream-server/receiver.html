@@ -248,7 +248,11 @@
             
             try {
                 // Step 1: Start listening first
-                peer = new Peer(receiverId);
+                peer = new Peer(receiverId, {
+                    config: {
+                        debug: 3
+                    }
+                });
                 
                 await new Promise((resolve, reject) => {
                     peer.on('open', (id) => {
@@ -267,7 +271,7 @@
                 // Step 2: Start the stream on the container server
                 updateStatus('📡 Requesting stream from container server...', 'connecting');
                 
-                const streamResponse = await fetch('http://localhost:8787/start-stream', {
+                const streamResponse = await fetch('http://localhost:8080/start-stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

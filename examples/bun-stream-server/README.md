@@ -1,109 +1,99 @@
-# Stream Kit Server Example (Cloudflare Containers)
+# Stream Kit Bun Server Example
 
-This example demonstrates how to run a WebRTC streaming server using Cloudflare Containers, Bun, and Puppeteer. The server can capture browser content and stream it to clients using WebRTC.
+This example demonstrates using Stream Kit with a Bun server that can stream web pages using Puppeteer and Chrome extensions.
+
+## Quick Start
+
+### Local Development (without Docker)
+```bash
+bun install
+bun run src/index.ts
+```
+
+### Docker Container (with tab capture & WebRTC fixes)
+```bash
+cd container
+docker build -t stream-container .
+# Map both HTTP port and UDP port range for WebRTC
+docker run -p 8080:8080 -p 40000-40100:40000-40100/udp stream-container
+```
 
 ## Architecture
 
-- **Container**: Runs a Bun server with Puppeteer for browser automation and WebRTC streaming
-- **Worker**: Manages container lifecycle and routes requests
-- **Durable Object**: Maintains container state and handles container-specific operations
+The system consists of:
 
-## Project Structure
+1. **Container Server** (`container/src/server.ts`) - Manages Puppeteer browser instances with Chrome extension
+2. **Chrome Extension** (`container/extension/`) - Handles tab capture and WebRTC streaming
+3. **Receiver HTML** (`receiver.html`) - Web interface for receiving and displaying streams
 
-```
-.
-├── wrangler.toml          # Cloudflare Workers/Containers config
-├── package.json           # Worker dependencies
-├── src/                   # Worker & Durable Object code
-│   ├── index.ts          # Worker entry point
-│   └── container.ts      # Durable Object implementation
-├── container/             # Container application code
-│   ├── Dockerfile        # Container configuration
-│   ├── package.json      # Container-specific dependencies
-│   ├── src/
-│   │   └── server.ts     # Bun server with Puppeteer/WebRTC
-│   └── tsconfig.json     # TypeScript config for container
-└── README.md
+## Docker Fixes
 
-```
+### Tab Capture Fix
 
-## Code Organization
+**Problem**: Chrome headless mode in Docker containers cannot properly capture tab content, resulting in empty video streams.
 
-The project is split into two main parts:
+**Solution**: 
+- Use virtual display (Xvfb) instead of headless mode
+- Enable proper graphics acceleration flags
+- Add window manager (fluxbox) for proper rendering context
 
-1. **Worker & Durable Object** (`/src`):
-   - Handles routing and container lifecycle
-   - Implements the external API endpoints
-   - Manages container state via Durable Objects
+### WebRTC Networking Fix
 
-2. **Container Application** (`/container`):
-   - Runs inside Cloudflare Container
-   - Implements the actual streaming functionality
-   - Uses Bun + Puppeteer for browser automation
+**Problem**: WebRTC peer-to-peer connections fail in Docker containers due to network isolation. Video streams connect but never receive data (readyState stays 0).
 
-## API Routes
+**Solution**:
+- Configure TURN servers in PeerJS for both sender and receiver
+- Expose UDP port range (40000-40100) for WebRTC media traffic
+- Use proper Chrome flags for media capture in containerized environment
 
-### API Endpoints
+### What was changed:
 
-- `GET /health` - Health check endpoint
-- `POST /stream` - Create a new stream session
-- `GET /stream/:id` - Get stream info and status
-- `DELETE /stream/:id` - Stop and cleanup stream
+1. **Dockerfile**: Added Xvfb, X11VNC, and fluxbox packages
+2. **Startup script**: Initializes virtual display before starting Chrome
+3. **Chrome flags**: Use `headless: false` with virtual display, enable GPU acceleration
+4. **Environment**: Set `DISPLAY=:0` for virtual X11 session
 
-## Development
+### Testing the fix:
 
-1. Install dependencies for both the Worker and Container:
+1. Build and run the Docker container:
 ```bash
-# Install Worker dependencies
-npm install
-
-# Install Container dependencies
-cd container && npm install
-```
-
-2. Test the container locally:
-```bash
-# Build the container (from the container directory)
 cd container
-docker build -t stream-server-test .
-
-# Run it locally
-docker run -p 8080:8080 --rm stream-server-test
-
-# Test with curl
-curl http://localhost:8080/health
+docker build -t stream-container .
+# Include UDP port mapping for WebRTC media connections
+docker run -p 8080:8080 -p 40000-40100:40000-40100/udp stream-container
 ```
 
-3. Deploy to Cloudflare:
-```bash
-# From the root directory
-wrangler deploy
+2. Open `receiver.html` in your browser
+
+3. Enter a URL (e.g., `https://www.nytimes.com`) and click "Start Stream & Listen"
+
+4. You should now see actual video content instead of a spinning/waiting state
+
+### Debugging:
+
+If you still have issues, check the container logs for:
+- `[TAB_CAPTURE]` messages showing stream details
+- Video track settings (width, height, frameRate)
+- Chrome launch success with virtual display
+
+Expected log output:
+```
+🔍 Starting basic browser launch mode: virtual display
+✅ Test 1 PASSED: Basic browser launch works
+[TAB_CAPTURE] Video track details: {width: 1920, height: 1080, frameRate: 30}
 ```
 
-## Container Details
+## Usage
 
-The container runs:
-- Bun for the server runtime
-- Puppeteer for browser automation
-- Chrome/Chromium for page rendering
-- WebRTC for streaming with PeerJS
+1. Start the container server
+2. Open `receiver.html` in a web browser  
+3. Enter the URL you want to stream
+4. Click "Start Stream & Listen"
+5. The receiver will automatically connect and display the live stream
 
-The included browser extension uses the default PeerJS server for WebRTC signaling, so no additional configuration is needed to establish peer connections. This is suitable for development and testing environments. For production deployments, you may want to configure a custom PeerJS server for better reliability and control.
+## Files
 
-## Environment Variables
-
-The container automatically receives these Cloudflare-provided variables:
-- `CLOUDFLARE_COUNTRY_A2` - Two-letter country code
-- `CLOUDFLARE_LOCATION` - Location name
-- `CLOUDFLARE_REGION` - Region name
-
-## Notes
-
-- Initial container provisioning takes a few minutes
-- Each container instance can handle one streaming session
-- The Worker will automatically route requests to the appropriate container instance
-- Container instances are recycled after periods of inactivity
-
-## License
-
-MIT License
+- `src/index.ts` - Main Bun server
+- `container/` - Docker container setup
+- `receiver.html` - Stream receiver interface
+- `test-*.js` - Test scripts for development
