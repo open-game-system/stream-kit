@@ -1,14 +1,14 @@
 import crypto from "crypto";
+import { Buffer } from "buffer";
+import {
+  parseTurnCredentialsResponse,
+  type IceServerConfig,
+} from "./protocol";
 
 const OPEN_CONTAINER_PORT = 8080;
 const STREAM_INSTANCE_NAME = "default-singleton-debug-v3";
-const TURN_TTL_SECONDS = 3600;
-
-type IceServer = {
-  urls: string[] | string;
-  username?: string;
-  credential?: string;
-};
+const TURN_TTL_SECONDS = 300;
+const DEBUG_TOKEN_HEADER = "x-debug-token";
 
 function logTrace(traceId: string, event: string, details?: Record<string, unknown>) {
   if (details) {
@@ -24,10 +24,18 @@ function withTraceHeader(response: Response, traceId: string): Response {
   return cloned;
 }
 
-function normalizeIceServers(iceServers: IceServer[]): IceServer[] {
+export function normalizeIceServers(iceServers: IceServerConfig[]): IceServerConfig[] {
   return iceServers.map((server) => {
     const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-    const filteredUrls = urls.filter((url) => !url.includes(":53"));
+    const filteredUrls = urls.filter((url) => {
+      const normalizedUrl = url.toLowerCase();
+      return !(
+        normalizedUrl.includes(":53?") ||
+        normalizedUrl.endsWith(":53") ||
+        normalizedUrl.includes(":53#") ||
+        normalizedUrl.includes(":53/")
+      );
+    });
     return {
       ...server,
       urls: filteredUrls,
@@ -38,7 +46,42 @@ function normalizeIceServers(iceServers: IceServer[]): IceServer[] {
   });
 }
 
-async function generateTurnIceServers(env: Env, traceId: string): Promise<IceServer[]> {
+function timingSafeMatches(actual: string, expected: string): boolean {
+  const actualBytes = Buffer.from(actual);
+  const expectedBytes = Buffer.from(expected);
+
+  if (actualBytes.length !== expectedBytes.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(actualBytes, expectedBytes);
+}
+
+export function isDebugRequestAuthorized(request: Request, env: Env): boolean {
+  if (!env.DEBUG_STATE_TOKEN) {
+    return true;
+  }
+
+  const providedToken = request.headers.get(DEBUG_TOKEN_HEADER);
+  if (!providedToken) {
+    return false;
+  }
+
+  return timingSafeMatches(providedToken, env.DEBUG_STATE_TOKEN);
+}
+
+function buildCorsHeaders(methods: string): HeadersInit {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": methods,
+    "Access-Control-Allow-Headers": `Content-Type, x-stream-trace-id, ${DEBUG_TOKEN_HEADER}`,
+  };
+}
+
+export async function generateTurnIceServers(
+  env: Env,
+  traceId: string
+): Promise<IceServerConfig[]> {
   const apiToken = env.CLOUDFLARE_TURN_API_TOKEN;
   const turnKeyId = env.CLOUDFLARE_TURN_KEY_ID;
 
@@ -68,11 +111,7 @@ async function generateTurnIceServers(env: Env, traceId: string): Promise<IceSer
     throw new Error(`TURN credentials request failed: ${response.status}`);
   }
 
-  const parsed = JSON.parse(bodyText) as { iceServers?: IceServer[] };
-  if (!parsed.iceServers || !Array.isArray(parsed.iceServers)) {
-    throw new Error("TURN credentials response did not include iceServers");
-  }
-
+  const parsed = parseTurnCredentialsResponse(JSON.parse(bodyText));
   const iceServers = normalizeIceServers(parsed.iceServers);
   logTrace(traceId, "turn_credentials_request_complete", {
     serverCount: iceServers.length,
@@ -317,9 +356,7 @@ export default {
             },
             {
               headers: {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, x-stream-trace-id",
+                ...buildCorsHeaders("GET, OPTIONS"),
               },
             }
           ),
@@ -334,9 +371,7 @@ export default {
             {
               status: 500,
               headers: {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, x-stream-trace-id",
+                ...buildCorsHeaders("GET, OPTIONS"),
               },
             }
           ),
@@ -347,15 +382,30 @@ export default {
       }
     }
 
+    if (url.pathname === "/debug-state" && !isDebugRequestAuthorized(request, env)) {
+      const response = withTraceHeader(
+        createJsonResponse(
+          { error: "Forbidden", traceId },
+          {
+            status: 403,
+            headers: buildCorsHeaders("GET, OPTIONS"),
+          }
+        ),
+        traceId
+      );
+      logTrace(traceId, "worker_response_sent", {
+        status: response.status,
+        path: url.pathname,
+        authorized: false,
+      });
+      return response;
+    }
+
     if (request.method === "OPTIONS") {
       const response = withTraceHeader(
         new Response(null, {
           status: 204,
-          headers: {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, x-stream-trace-id",
-          },
+          headers: buildCorsHeaders("GET, POST, OPTIONS"),
         }),
         traceId
       );

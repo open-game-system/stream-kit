@@ -4,6 +4,7 @@ declare namespace Cloudflare {
 	interface Env {
 		CLOUDFLARE_TURN_API_TOKEN: string;
 		CLOUDFLARE_TURN_KEY_ID: string;
+		DEBUG_STATE_TOKEN?: string;
 		STREAM_CONTAINER: DurableObjectNamespace<import("./src/index").StreamContainer>;
 	}
 }

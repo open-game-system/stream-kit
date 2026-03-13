@@ -5,7 +5,8 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "start": "wrangler dev"
+    "start": "wrangler dev",
+    "test": "npx --yes vitest@2.1.9 run test/index.test.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",

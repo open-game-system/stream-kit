@@ -23,6 +23,10 @@ import type { Browser, Page } from 'puppeteer';
 import crypto from 'crypto';
 import http from 'http';
 import url from 'url';
+import {
+  parseStartStreamRequest,
+  type IceServerConfig,
+} from '../../src/protocol';
 
 // TypeScript declaration for browser window extensions
 declare global {
@@ -35,7 +39,7 @@ declare global {
       lastError: string | null;
       callCount: number;
     };
-    INITIALIZE?: (params: { srcPeerId: string; destPeerId: string; iceServers?: Array<{ urls: string[] | string; username?: string; credential?: string }> }) => Promise<void>;
+    INITIALIZE?: (params: { srcPeerId: string; destPeerId: string; iceServers?: IceServerConfig[] }) => Promise<void>;
     Peer?: any; // PeerJS constructor
   }
 }
@@ -830,7 +834,7 @@ async function handleDebugState(traceId: string): Promise<Response> {
 }
 
 async function handleStartStream(
-  data: { url: string; peerId: string; iceServers?: Array<{ urls: string[] | string; username?: string; credential?: string }> },
+  data: { url: string; peerId: string; iceServers?: IceServerConfig[] },
   traceId: string
 ): Promise<Response> {
   try {
@@ -1075,7 +1079,7 @@ const server = http.createServer(async (req: any, res: any) => {
         req.on('end', resolve);
       });
 
-      const data = JSON.parse(body);
+      const data = parseStartStreamRequest(JSON.parse(body));
       response = await handleStartStream(data, traceId);
     } else {
       response = new Response(`Not Found: ${req.method} ${req.url} (parsed path: ${pathname})`, { status: 404 });
@@ -1091,6 +1095,18 @@ const server = http.createServer(async (req: any, res: any) => {
     res.end(responseText);
 
   } catch (err: any) {
+    if (err instanceof SyntaxError || err?.message?.includes('must be')) {
+      res.writeHead(400, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, x-stream-trace-id',
+        'x-stream-trace-id': req.headers['x-stream-trace-id'] || '',
+      });
+      res.end(JSON.stringify({ status: 'error', message: err.message }));
+      return;
+    }
+
     console.error('Unhandled error:', err);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: err.message }));
