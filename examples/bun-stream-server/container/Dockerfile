@@ -1,5 +1,5 @@
-# Use Debian ARM64 which has the actual Chromium binary (not a snap wrapper)
-FROM --platform=linux/arm64 debian:bullseye-slim
+# Cloudflare Containers require linux/amd64
+FROM --platform=linux/amd64 debian:bullseye-slim
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -59,4 +59,4 @@ COPY . .
 EXPOSE 8080
 # Expose UDP port range for WebRTC media connections
 EXPOSE 40000-40100/udp
-CMD ["tsx", "src/server.ts"] 
+CMD ["npm", "start"] 

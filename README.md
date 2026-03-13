@@ -10,6 +10,8 @@ Stream Kit enables web games to offload intensive graphics rendering to powerful
 
 This monorepo contains the core libraries, React bindings, and server implementation for the Stream Kit service.
 
+For a centralized overview of how the repo fits together, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 ## Packages
 
 -   [`@open-game-system/stream-kit-types`](packages/stream-kit-types): Core TypeScript types.

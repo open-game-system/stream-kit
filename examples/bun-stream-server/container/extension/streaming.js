@@ -68,8 +68,23 @@ window.streamingDebug = {
   callCount: 0,
   scriptLoadTime: new Date().toISOString(),
   peerJsAvailable: typeof Peer !== 'undefined',
-  chromeTabCaptureAvailable: typeof chrome !== 'undefined' && typeof chrome.tabCapture !== 'undefined'
+  chromeTabCaptureAvailable: typeof chrome !== 'undefined' && typeof chrome.tabCapture !== 'undefined',
+  captureDiagnostics: null,
+  testVideoDiagnostics: null,
+  eventLog: []
 };
+
+function recordDebugEvent(event, details = {}) {
+  const entry = {
+    event,
+    details,
+    timestamp: new Date().toISOString()
+  };
+  window.streamingDebug.eventLog.push(entry);
+  if (window.streamingDebug.eventLog.length > 40) {
+    window.streamingDebug.eventLog.shift();
+  }
+}
 
 console.log('[INIT] streaming.js loaded successfully');
 console.log('[INIT] PeerJS available:', window.streamingDebug.peerJsAvailable);
@@ -94,6 +109,7 @@ function addConnection(peerId) {
   // Update debug info
   window.streamingDebug.addConnectionCalled = true;
   window.streamingDebug.lastPeerId = peerId;
+  recordDebugEvent('connection_added', { peerId, size: window.activeConnections.size });
 }
 
 /**
@@ -107,6 +123,7 @@ function removeConnection(peerId) {
   
   const wasPresent = window.activeConnections.has(peerId);
   window.activeConnections.delete(peerId);
+  recordDebugEvent('connection_removed', { peerId, wasPresent, size: window.activeConnections.size });
   
   console.log(`[CONNECTION] Was peer present before removal: ${wasPresent}`);
   console.log(`[CONNECTION] activeConnections after remove:`, Array.from(window.activeConnections));
@@ -114,7 +131,7 @@ function removeConnection(peerId) {
   console.log(`[CONNECTION] Connection closed to ${peerId}. Active: ${window.activeConnections.size}`);
 }
 
-async function INITIALIZE({ srcPeerId, destPeerId }) {
+async function INITIALIZE({ srcPeerId, destPeerId, iceServers = [] }) {
   console.log(`[INITIALIZE] ========== STARTING INITIALIZATION ==========`);
   console.log(`[INITIALIZE] Function called with params:`, { srcPeerId, destPeerId });
   console.log(`[INITIALIZE] srcPeerId type: ${typeof srcPeerId}, value: "${srcPeerId}"`);
@@ -125,6 +142,9 @@ async function INITIALIZE({ srcPeerId, destPeerId }) {
   window.streamingDebug.callCount++;
   window.streamingDebug.lastPeerId = destPeerId;
   window.streamingDebug.lastError = null; // Reset error state
+  window.streamingDebug.captureDiagnostics = null;
+  window.streamingDebug.testVideoDiagnostics = null;
+  recordDebugEvent('initialize_called', { srcPeerId, destPeerId, iceServerCount: Array.isArray(iceServers) ? iceServers.length : 0 });
   
   console.log(`[INITIALIZE] Updated debug info - call count: ${window.streamingDebug.callCount}`);
   console.log(`[INITIALIZE] Current activeConnections:`, Array.from(window.activeConnections));
@@ -355,6 +375,22 @@ async function INITIALIZE({ srcPeerId, destPeerId }) {
         settings: track.getSettings ? track.getSettings() : 'N/A'
       });
     });
+    window.streamingDebug.captureDiagnostics = {
+      streamId: stream.id,
+      active: stream.active,
+      trackCount: stream.getTracks().length,
+      videoTrackCount: stream.getVideoTracks().length,
+      audioTrackCount: stream.getAudioTracks().length,
+      tracks: stream.getTracks().map((track) => ({
+        kind: track.kind,
+        label: track.label,
+        enabled: track.enabled,
+        readyState: track.readyState,
+        muted: track.muted,
+        settings: track.getSettings ? track.getSettings() : null
+      }))
+    };
+    recordDebugEvent('capture_stream_created', window.streamingDebug.captureDiagnostics);
     
     // Test if the stream is actually producing data
     if (stream.getVideoTracks().length > 0) {
@@ -382,25 +418,60 @@ async function INITIALIZE({ srcPeerId, destPeerId }) {
         console.error('[TAB_CAPTURE] 2. Extension permissions not properly granted');
         console.error('[TAB_CAPTURE] 3. Chrome tab capture API not working in this environment');
       }
+      window.streamingDebug.captureDiagnostics = {
+        ...window.streamingDebug.captureDiagnostics,
+        videoTrackDetails: {
+          width: videoSettings.width || 0,
+          height: videoSettings.height || 0,
+          frameRate: videoSettings.frameRate || null,
+          aspectRatio: videoSettings.aspectRatio || null,
+          zeroDimensions: videoSettings.width === 0 || videoSettings.height === 0
+        }
+      };
+      recordDebugEvent('capture_video_track_inspected', window.streamingDebug.captureDiagnostics.videoTrackDetails);
       
       // Create a test video element to verify the stream works
       try {
         const testVideo = document.createElement('video');
         testVideo.srcObject = stream;
         testVideo.muted = true; // Required for autoplay
+        window.streamingDebug.testVideoDiagnostics = {
+          attached: true,
+          playStarted: false,
+          waiting: false,
+          stalled: false,
+          metadataLoaded: false,
+          videoWidth: 0,
+          videoHeight: 0,
+          hasNonZeroPixels: null,
+          samplePixels: null,
+          error: null
+        };
         
         testVideo.onloadedmetadata = () => {
-          console.log('[TAB_CAPTURE] Test video metadata loaded:', JSON.stringify({
+          const metadata = {
             videoWidth: testVideo.videoWidth,
             videoHeight: testVideo.videoHeight,
             duration: testVideo.duration,
             readyState: testVideo.readyState,
             networkState: testVideo.networkState
-          }));
+          };
+          console.log('[TAB_CAPTURE] Test video metadata loaded:', JSON.stringify(metadata));
+          window.streamingDebug.testVideoDiagnostics = {
+            ...window.streamingDebug.testVideoDiagnostics,
+            metadataLoaded: true,
+            ...metadata
+          };
+          recordDebugEvent('test_video_metadata_loaded', metadata);
           
           // Try to play the video to see if it actually has content
           testVideo.play().then(() => {
             console.log('[TAB_CAPTURE] ✅ Test video can play');
+            window.streamingDebug.testVideoDiagnostics = {
+              ...window.streamingDebug.testVideoDiagnostics,
+              playStarted: true
+            };
+            recordDebugEvent('test_video_play_started');
             
             // Check if video is actually updating by sampling pixels
             setTimeout(() => {
@@ -412,38 +483,90 @@ async function INITIALIZE({ srcPeerId, destPeerId }) {
                 ctx.drawImage(testVideo, 0, 0);
                 const imageData = ctx.getImageData(0, 0, 10, 10);
                 const hasNonZeroPixels = imageData.data.some(pixel => pixel > 0);
+                const samplePixels = Array.from(imageData.data.slice(0, 20));
                 console.log('[TAB_CAPTURE] Video width:', testVideo.videoWidth);
                 console.log('[TAB_CAPTURE] Video height:', testVideo.videoHeight);
                 console.log('[TAB_CAPTURE] Video has non-zero pixels:', hasNonZeroPixels);
-                console.log('[TAB_CAPTURE] Sample pixel data:', Array.from(imageData.data.slice(0, 20)));
+                console.log('[TAB_CAPTURE] Sample pixel data:', samplePixels);
+                window.streamingDebug.testVideoDiagnostics = {
+                  ...window.streamingDebug.testVideoDiagnostics,
+                  videoWidth: testVideo.videoWidth,
+                  videoHeight: testVideo.videoHeight,
+                  hasNonZeroPixels,
+                  samplePixels
+                };
+                recordDebugEvent('test_video_pixels_sampled', {
+                  videoWidth: testVideo.videoWidth,
+                  videoHeight: testVideo.videoHeight,
+                  hasNonZeroPixels
+                });
               } catch (canvasErr) {
                 console.warn('[TAB_CAPTURE] Could not sample video pixels:', canvasErr);
+                window.streamingDebug.testVideoDiagnostics = {
+                  ...window.streamingDebug.testVideoDiagnostics,
+                  error: `Pixel sample failed: ${canvasErr.message}`
+                };
+                recordDebugEvent('test_video_pixel_sample_failed', { message: canvasErr.message });
               }
             }, 1000);
             
           }).catch((playErr) => {
             console.error('[TAB_CAPTURE] Test video play failed:', playErr);
+            window.streamingDebug.testVideoDiagnostics = {
+              ...window.streamingDebug.testVideoDiagnostics,
+              error: `Play failed: ${playErr.message || String(playErr)}`
+            };
+            recordDebugEvent('test_video_play_failed', {
+              message: playErr.message || String(playErr)
+            });
           });
         };
         
         testVideo.onerror = (e) => {
           console.error('[TAB_CAPTURE] Test video error:', e);
           console.error('[TAB_CAPTURE] Video error details:', testVideo.error);
+          window.streamingDebug.testVideoDiagnostics = {
+            ...window.streamingDebug.testVideoDiagnostics,
+            error: testVideo.error ? `Video error code ${testVideo.error.code}` : 'Unknown video error'
+          };
+          recordDebugEvent('test_video_error', {
+            errorCode: testVideo.error ? testVideo.error.code : null
+          });
         };
         
         testVideo.onwaiting = () => {
           console.log('[TAB_CAPTURE] Test video waiting for data...');
+          window.streamingDebug.testVideoDiagnostics = {
+            ...window.streamingDebug.testVideoDiagnostics,
+            waiting: true
+          };
+          recordDebugEvent('test_video_waiting');
         };
         
         testVideo.onstalled = () => {
           console.log('[TAB_CAPTURE] Test video stalled');
+          window.streamingDebug.testVideoDiagnostics = {
+            ...window.streamingDebug.testVideoDiagnostics,
+            stalled: true
+          };
+          recordDebugEvent('test_video_stalled');
         };
         
       } catch (testErr) {
         console.warn('[TAB_CAPTURE] Could not create test video element:', testErr);
+        window.streamingDebug.testVideoDiagnostics = {
+          attached: false,
+          error: `Test video creation failed: ${testErr.message}`
+        };
+        recordDebugEvent('test_video_create_failed', { message: testErr.message });
       }
     } else {
       console.error('[TAB_CAPTURE] ❌ No video tracks in stream!');
+      window.streamingDebug.captureDiagnostics = {
+        ...window.streamingDebug.captureDiagnostics,
+        error: 'No video tracks in stream'
+      };
+      recordDebugEvent('capture_stream_missing_video_track');
     }
     
     // Store globally to detect active capture on subsequent init calls
@@ -469,8 +592,9 @@ async function INITIALIZE({ srcPeerId, destPeerId }) {
     console.log(`[PEERJS] Peer constructor available:`, typeof Peer !== 'undefined');
     
     const peer = new Peer(srcPeerId, {
+      debug: 3,
       config: {
-        debug: 3,
+        iceServers: Array.isArray(iceServers) ? iceServers : []
       }
     });
     console.log(`[PEERJS] Peer object created:`, peer);
@@ -599,11 +723,15 @@ async function INITIALIZE({ srcPeerId, destPeerId }) {
     console.log(`[INITIALIZE] Final activeConnections:`, Array.from(window.activeConnections));
     console.log(`[INITIALIZE] Final activeConnections size:`, window.activeConnections.size);
     console.log(`[INITIALIZE] ========== INITIALIZATION COMPLETE ==========`);
+    recordDebugEvent('initialize_complete', {
+      activeConnectionsSize: window.activeConnections.size
+    });
     
   } catch (error) {
     console.error(`[INITIALIZE] ❌ INITIALIZATION FAILED:`, error);
     console.error(`[INITIALIZE] Error stack:`, error.stack);
     window.streamingDebug.lastError = `Initialization failed: ${error.message}`;
+    recordDebugEvent('initialize_failed', { message: error.message });
     throw error; // Re-throw so container server knows it failed
   }
 }

@@ -173,6 +173,11 @@
         </div>
         
         <div class="form-group">
+            <label for="serverUrlInput">Server URL:</label>
+            <input type="text" id="serverUrlInput" placeholder="https://bun-stream-server.jonathanrmumm.workers.dev" value="https://bun-stream-server.jonathanrmumm.workers.dev">
+        </div>
+
+        <div class="form-group">
             <label for="urlInput">URL to Stream:</label>
             <input type="text" id="urlInput" placeholder="https://www.nytimes.com" value="https://www.nytimes.com">
         </div>
@@ -209,6 +214,8 @@
         let currentConnection = null;
         let receivedCall = null;
         let isListening = false;
+        let callHandlersBound = false;
+        let currentTraceId = null;
         
         const urlInput = document.getElementById('urlInput');
         const receiverIdDisplay = document.getElementById('receiverIdDisplay');
@@ -229,6 +236,67 @@
             status.textContent = message;
             status.className = `status ${type}`;
         }
+
+        async function logPeerConnectionStats(call, label = 'rtc') {
+            const pc = call && (call.peerConnection || call._negotiator?._pc || null);
+            if (!pc || typeof pc.getStats !== 'function') {
+                console.log(`📡 ${label}: peer connection stats unavailable`);
+                return;
+            }
+
+            try {
+                const stats = await pc.getStats();
+                const summary = {
+                    connectionState: pc.connectionState,
+                    iceConnectionState: pc.iceConnectionState,
+                    iceGatheringState: pc.iceGatheringState,
+                    signalingState: pc.signalingState,
+                    inboundVideo: null,
+                    inboundAudio: null,
+                    candidatePair: null
+                };
+
+                stats.forEach((report) => {
+                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                        summary.inboundVideo = {
+                            bytesReceived: report.bytesReceived,
+                            framesDecoded: report.framesDecoded,
+                            frameWidth: report.frameWidth,
+                            frameHeight: report.frameHeight,
+                            framesPerSecond: report.framesPerSecond,
+                            packetsLost: report.packetsLost
+                        };
+                    }
+
+                    if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+                        summary.inboundAudio = {
+                            bytesReceived: report.bytesReceived,
+                            packetsLost: report.packetsLost
+                        };
+                    }
+
+                    if (report.type === 'candidate-pair' && report.nominated && report.state === 'succeeded') {
+                        summary.candidatePair = {
+                            currentRoundTripTime: report.currentRoundTripTime,
+                            availableIncomingBitrate: report.availableIncomingBitrate,
+                            bytesReceived: report.bytesReceived,
+                            bytesSent: report.bytesSent
+                        };
+                    }
+                });
+
+                console.log(`📡 ${label} stats:`, summary);
+            } catch (error) {
+                console.error(`📡 ${label} stats failed:`, error);
+            }
+        }
+
+        function createTraceId() {
+            if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+                return globalThis.crypto.randomUUID();
+            }
+            return 'trace-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+        }
         
         async function startStreamAndListen() {
             const url = urlInput.value.trim();
@@ -247,10 +315,35 @@
             startListeningBtn.disabled = true;
             
             try {
-                // Step 1: Start listening first
+                cleanup();
+
+                // Step 1: Load ICE configuration before creating either peer.
+                updateStatus('📡 Requesting stream from container server...', 'connecting');
+                
+                const serverUrl = document.getElementById('serverUrlInput').value.trim();
+                const endpoint = serverUrl.endsWith('/') ? `${serverUrl}start-stream` : `${serverUrl}/start-stream`;
+                const iceServersEndpoint = serverUrl.endsWith('/') ? `${serverUrl}ice-servers` : `${serverUrl}/ice-servers`;
+                currentTraceId = createTraceId();
+                console.log('🧭 Stream trace ID:', currentTraceId);
+                
+                const iceResponse = await fetch(iceServersEndpoint, {
+                    method: 'GET',
+                    headers: {
+                        'x-stream-trace-id': currentTraceId
+                    }
+                });
+                const icePayload = await iceResponse.json();
+                if (!iceResponse.ok) {
+                    throw new Error((icePayload.error || 'Failed to load ICE servers') + ` (trace ${icePayload.traceId || currentTraceId})`);
+                }
+                const iceServers = Array.isArray(icePayload.iceServers) ? icePayload.iceServers : [];
+                console.log('🧊 ICE servers loaded:', iceServers);
+                
+                // Step 2: Start listening with the fetched ICE servers.
                 peer = new Peer(receiverId, {
+                    debug: 3,
                     config: {
-                        debug: 3
+                        iceServers
                     }
                 });
                 
@@ -268,29 +361,35 @@
                     });
                 });
                 
-                // Step 2: Start the stream on the container server
-                updateStatus('📡 Requesting stream from container server...', 'connecting');
+                // Step 3: Start listening for the incoming call before
+                // the container finishes INITIALIZE and dials our peer.
+                setupCallHandlers();
                 
-                const streamResponse = await fetch('http://localhost:8080/start-stream', {
+                // Step 4: Start the stream on the container server.
+                const streamResponse = await fetch(endpoint, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-stream-trace-id': currentTraceId
+                    },
                     body: JSON.stringify({
                         url: url,
-                        peerId: receiverId
+                        peerId: receiverId,
+                        iceServers
                     })
                 });
                 
                 const result = await streamResponse.json();
+                const responseTraceId = streamResponse.headers.get('x-stream-trace-id') || result.traceId || currentTraceId;
+                console.log('🧭 Stream response trace ID:', responseTraceId);
                 
                 if (result.status !== 'success') {
-                    throw new Error(result.message || 'Failed to start stream');
+                    throw new Error((result.message || 'Failed to start stream') + ` (trace ${responseTraceId})`);
                 }
                 
-                console.log('✅ Stream started:', result.srcPeerId);
-                updateStatus('🎯 Stream started! Waiting for connection...', 'connecting');
-                
-                // Step 3: Set up call handling (the container will call us)
-                setupCallHandlers();
+                console.log('✅ Stream started:', result.srcPeerId, 'trace:', responseTraceId);
+                peerIdInput.value = result.srcPeerId || '';
+                updateStatus(`🎯 Stream started! Waiting for connection... Trace: ${responseTraceId}`, 'connecting');
                 
                 // Enable other controls
                 connectBtn.disabled = false;
@@ -303,9 +402,30 @@
         }
         
         function setupCallHandlers() {
+            if (!peer || callHandlersBound) {
+                return;
+            }
+            
+            callHandlersBound = true;
+            
             peer.on('call', (call) => {
                 console.log('📞 Receiving call from:', call.peer);
                 updateStatus('📡 Receiving stream from: ' + call.peer, 'connecting');
+                const peerConnection = call.peerConnection || call._negotiator?._pc || null;
+                if (peerConnection) {
+                    console.log('📡 Peer connection object detected');
+                    peerConnection.onconnectionstatechange = () => {
+                        console.log('📡 connectionState:', peerConnection.connectionState);
+                    };
+                    peerConnection.oniceconnectionstatechange = () => {
+                        console.log('📡 iceConnectionState:', peerConnection.iceConnectionState);
+                    };
+                    peerConnection.onicegatheringstatechange = () => {
+                        console.log('📡 iceGatheringState:', peerConnection.iceGatheringState);
+                    };
+                } else {
+                    console.log('📡 Peer connection object not available on call');
+                }
                 
                 // Answer the call without providing our own stream
                 call.answer();
@@ -447,7 +567,12 @@
                         console.log('  - videoHeight:', remoteVideo.videoHeight);
                         console.log('  - networkState:', remoteVideo.networkState);
                         console.log('  - error:', remoteVideo.error);
+                        logPeerConnectionStats(call, '2s');
                     }, 2000);
+
+                    setTimeout(() => {
+                        logPeerConnectionStats(call, '5s');
+                    }, 5000);
                     
                     disconnectBtn.disabled = false;
                 });
@@ -477,7 +602,9 @@
             isListening = true;
             
             // Create our peer with the receiver ID
-            peer = new Peer(receiverId);
+            peer = new Peer(receiverId, {
+                debug: 3
+            });
             
             peer.on('open', (id) => {
                 console.log('Receiver peer opened with ID:', id);
@@ -583,6 +710,9 @@
                 peer.destroy();
                 peer = null;
             }
+            
+            callHandlersBound = false;
+            currentTraceId = null;
             
             if (remoteVideo.srcObject) {
                 remoteVideo.srcObject.getTracks().forEach(track => track.stop());

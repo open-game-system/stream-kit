@@ -35,7 +35,7 @@ declare global {
       lastError: string | null;
       callCount: number;
     };
-    INITIALIZE?: (params: { srcPeerId: string; destPeerId: string }) => Promise<void>;
+    INITIALIZE?: (params: { srcPeerId: string; destPeerId: string; iceServers?: Array<{ urls: string[] | string; username?: string; credential?: string }> }) => Promise<void>;
     Peer?: any; // PeerJS constructor
   }
 }
@@ -54,6 +54,21 @@ let streamingPage: Page | undefined;
 let connectionCheckInterval: NodeJS.Timeout | null = null;
 let shutdownTimer: NodeJS.Timeout | null = null;
 
+function logTrace(traceId: string, event: string, details?: Record<string, unknown>) {
+  if (details) {
+    console.log(`[trace:${traceId}] ${event}`, details);
+    return;
+  }
+  console.log(`[trace:${traceId}] ${event}`);
+}
+
+function buildTraceHeaders(traceId?: string): HeadersInit | undefined {
+  if (!traceId) return undefined;
+  return {
+    'x-stream-trace-id': traceId,
+  };
+}
+
 /** Utility: Create JSON response */
 function jsonResponse(data: unknown, init: ResponseInit = {}) {
   return new Response(JSON.stringify(data), {
@@ -61,11 +76,58 @@ function jsonResponse(data: unknown, init: ResponseInit = {}) {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, x-stream-trace-id',
       ...(init.headers || {}) 
     },
     ...init,
   });
+}
+
+async function collectBrowserState(traceId: string) {
+  const activePageState = activePage
+    ? await activePage
+        .evaluate(() => ({
+          url: window.location.href,
+          title: document.title,
+          visibilityState: document.visibilityState,
+          readyState: document.readyState,
+          hasFocus: document.hasFocus(),
+        }))
+        .catch((error: Error) => ({ error: error.message }))
+    : null;
+
+  const extensionState = streamingPage
+    ? await streamingPage
+        .evaluate(() => ({
+          location: window.location.href,
+          hasInitialize: typeof window.INITIALIZE === 'function',
+          activeConnections: window.activeConnections ? Array.from(window.activeConnections) : [],
+          activeConnectionsSize: window.activeConnections ? window.activeConnections.size : 0,
+          streamingDebug: window.streamingDebug || null,
+          peerDefined: typeof window.Peer !== 'undefined',
+        }))
+        .catch((error: Error) => ({ error: error.message }))
+    : null;
+
+  const targetSummary = browser
+    ? browser.targets().map((target) => ({
+        type: target.type(),
+        url: target.url(),
+      }))
+    : [];
+
+  const snapshot = {
+    browserActive: !!browser,
+    activePageState,
+    extensionState,
+    targetSummary,
+    monitoringActive: !!connectionCheckInterval,
+    shutdownTimerActive: !!shutdownTimer,
+    capturedAt: new Date().toISOString(),
+  };
+
+  logTrace(traceId, 'browser_state_snapshot', snapshot as Record<string, unknown>);
+  return snapshot;
 }
 
 /** Build Puppeteer launch options */
@@ -760,33 +822,68 @@ async function handleTest(): Promise<Response> {
   }
 }
 
-async function handleStartStream(data: { url: string; peerId: string }): Promise<Response> {
+async function handleDebugState(traceId: string): Promise<Response> {
+  const snapshot = await collectBrowserState(traceId);
+  return jsonResponse(snapshot, {
+    headers: buildTraceHeaders(traceId),
+  });
+}
+
+async function handleStartStream(
+  data: { url: string; peerId: string; iceServers?: Array<{ urls: string[] | string; username?: string; credential?: string }> },
+  traceId: string
+): Promise<Response> {
   try {
-    const { url: targetUrl, peerId: destPeerId } = data;
+    const { url: targetUrl, peerId: destPeerId, iceServers } = data;
     if (!targetUrl || !destPeerId) {
-      return jsonResponse({ error: 'Missing targetUrl or peerId' }, { status: 400 });
+      return jsonResponse(
+        { error: 'Missing targetUrl or peerId', traceId },
+        { status: 400, headers: buildTraceHeaders(traceId) }
+      );
     }
+
+    logTrace(traceId, 'start_stream_request_received', {
+      targetUrl,
+      destPeerId,
+      iceServerCount: Array.isArray(iceServers) ? iceServers.length : 0,
+      browserReused: !!browser,
+    });
 
     // Use existing browser or launch new one
     if (!browser) {
-      console.log('No existing browser, launching new instance...');
+      logTrace(traceId, 'browser_launch_start');
       browser = await launchBrowserWithExtension();
+      logTrace(traceId, 'browser_launch_complete');
     } else {
-      console.log('Using existing browser instance');
+      logTrace(traceId, 'browser_reuse');
     }
 
     // Create new page for this stream
     const page = await browser.newPage();
     activePage = page; // Set as active page for monitoring
+    page.on('console', (msg) => {
+      logTrace(traceId, `page_console_${msg.type()}`, { text: msg.text() });
+    });
+    page.on('pageerror', (error) => {
+      logTrace(traceId, 'page_error', { message: error.message });
+    });
     
     // Navigate to target URL
+    logTrace(traceId, 'page_navigation_start', { targetUrl });
     await page.goto(targetUrl);
+    logTrace(traceId, 'page_navigation_complete', {
+      finalUrl: page.url(),
+      title: await page.title().catch(() => '(unavailable)'),
+    });
     
     // Set page to full screen
     await page.setViewport({ width: 1920, height: 1080 }); // Set a large viewport
+    logTrace(traceId, 'page_viewport_set', { width: 1920, height: 1080 });
 
     // Get extension streaming page and initialize streaming
+    logTrace(traceId, 'extension_page_wait_start');
     streamingPage = await getExtensionStreamingPage(browser, 30000); // This also sets EXTENSION_ID
+    logTrace(traceId, 'extension_page_ready', { extensionId: EXTENSION_ID });
 
     // Trigger a user-gesture-like command to satisfy activeTab requirements
     try {
@@ -800,21 +897,21 @@ async function handleStartStream(data: { url: string; peerId: string }): Promise
         await nyPage.keyboard.press('KeyS');
         await nyPage.keyboard.up('Shift');
         await nyPage.keyboard.up('Alt');
-        console.log('🔑 Sent start-capture command shortcut');
+        logTrace(traceId, 'capture_shortcut_sent');
       }
     } catch (e) {
-      console.warn('Could not send command shortcut:', (e as Error).message);
+      logTrace(traceId, 'capture_shortcut_failed', { message: (e as Error).message });
     }
     
     // Set up console log monitoring for the extension page
     streamingPage.on('console', (msg) => {
       const type = msg.type();
       const text = msg.text();
-      console.log(`[EXTENSION-${type.toUpperCase()}] ${text}`);
+      logTrace(traceId, `extension_console_${type}`, { text });
     });
     
     streamingPage.on('pageerror', (error) => {
-      console.error('[EXTENSION-ERROR] Page error:', error.message);
+      logTrace(traceId, 'extension_page_error', { message: error.message });
     });
     
     // Test if we can execute code in the extension context
@@ -836,30 +933,34 @@ async function handleStartStream(data: { url: string; peerId: string }): Promise
           )
         };
       });
-      console.log('🧪 Extension context test result:', testResult);
+      logTrace(traceId, 'extension_context_test', testResult as Record<string, unknown>);
     } catch (error) {
-      console.error('🧪 Extension context test failed:', error);
+      logTrace(traceId, 'extension_context_test_failed', { message: (error as Error).message });
     }
     
     // Ensure INITIALIZE function is loaded
     await assertExtensionLoaded(streamingPage);
+    logTrace(traceId, 'extension_initialize_detected');
 
     // Force a simple log to test console monitoring
-    console.log('🔍 Forcing a test log in extension...');
+    logTrace(traceId, 'extension_console_probe_start');
     await streamingPage.evaluate(() => {
       console.log('[FORCED-TEST] This should appear in container logs if console monitoring works');
       console.error('[FORCED-ERROR] This is a test error');
       console.warn('[FORCED-WARN] This is a test warning');
     });
     
-    console.log('🔍 Test logs sent, checking if they appeared above...');
+    logTrace(traceId, 'extension_console_probe_complete');
 
     const srcPeerId = crypto.randomUUID();
-    const peers = { srcPeerId, destPeerId };
+    const peers = { srcPeerId, destPeerId, iceServers: Array.isArray(iceServers) ? iceServers : [] };
 
     // Initialize streaming in extension page
-    console.log('🚀 About to call INITIALIZE function with params:', peers);
-    console.log('🚀 Extension page URL:', streamingPage.url());
+    logTrace(traceId, 'extension_initialize_start', {
+      srcPeerId,
+      destPeerId,
+      extensionUrl: streamingPage.url(),
+    });
     
     try {
       await Promise.race([
@@ -873,7 +974,7 @@ async function handleStartStream(data: { url: string; peerId: string }): Promise
         new Promise((_, reject) => setTimeout(() => reject(new Error('INITIALIZE timeout')), 30000)),
       ]);
       
-      console.log('✅ INITIALIZE function completed successfully');
+      logTrace(traceId, 'extension_initialize_complete');
       
       // Check the state immediately after INITIALIZE
       const postInitState = await streamingPage.evaluate(() => {
@@ -885,11 +986,12 @@ async function handleStartStream(data: { url: string; peerId: string }): Promise
         };
       });
       
-      console.log('📊 Post-INITIALIZE state:', postInitState);
+      logTrace(traceId, 'post_initialize_state', postInitState as Record<string, unknown>);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await collectBrowserState(traceId);
       
     } catch (error) {
-      console.error('❌ INITIALIZE function failed:', error);
-      console.error('❌ Error details:', {
+      logTrace(traceId, 'extension_initialize_failed', {
         name: (error as Error).name,
         message: (error as Error).message,
         stack: (error as Error).stack
@@ -902,16 +1004,29 @@ async function handleStartStream(data: { url: string; peerId: string }): Promise
       startConnectionMonitoring();
     }
 
+    logTrace(traceId, 'start_stream_response_sent', {
+      srcPeerId,
+      monitoringActive: !!connectionCheckInterval,
+    });
     return jsonResponse({ 
       status: 'success', 
+      traceId,
       srcPeerId, 
       browserWSEndpoint: browser.wsEndpoint(),
       monitoringActive: !!connectionCheckInterval
+    }, {
+      headers: buildTraceHeaders(traceId),
     });
   } catch (err: any) {
-    console.error('handleStartStream error:', err);
+    logTrace(traceId, 'start_stream_error', {
+      message: err.message,
+      stack: err.stack,
+    });
     // Don't close browser on error - let monitoring handle lifecycle
-    return jsonResponse({ status: 'error', message: err.message }, { status: 500 });
+    return jsonResponse(
+      { status: 'error', message: err.message, traceId },
+      { status: 500, headers: buildTraceHeaders(traceId) }
+    );
   }
 }
 
@@ -919,12 +1034,18 @@ async function handleStartStream(data: { url: string; peerId: string }): Promise
 const server = http.createServer(async (req: any, res: any) => {
   const parsedUrl = url.parse(req.url || '', true);
   const { pathname } = parsedUrl;
+  const traceId = req.headers['x-stream-trace-id'] || crypto.randomUUID();
 
   try {
+    logTrace(traceId, 'http_request_received', {
+      method: req.method,
+      pathname,
+    });
     // Set CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-stream-trace-id');
+    res.setHeader('x-stream-trace-id', traceId);
 
     // Handle CORS preflight requests
     if (req.method === 'OPTIONS') {
@@ -941,6 +1062,8 @@ const server = http.createServer(async (req: any, res: any) => {
       response = await handlePing();
     } else if (pathname === '/test-puppeteer') {
       response = await handleTest();
+    } else if (pathname === '/debug-state') {
+      response = await handleDebugState(traceId);
     } else if (pathname === '/start-stream' && req.method === 'POST') {
       // Parse request body for POST requests
       let body = '';
@@ -953,9 +1076,9 @@ const server = http.createServer(async (req: any, res: any) => {
       });
 
       const data = JSON.parse(body);
-      response = await handleStartStream(data);
+      response = await handleStartStream(data, traceId);
     } else {
-      response = new Response('Not Found', { status: 404 });
+      response = new Response(`Not Found: ${req.method} ${req.url} (parsed path: ${pathname})`, { status: 404 });
     }
 
     // Convert Response object to Node.js response
@@ -975,8 +1098,8 @@ const server = http.createServer(async (req: any, res: any) => {
 });
 
 const PORT = 8080;
-server.listen(PORT, () => {
-  console.log(`Container server running at http://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Container server running at http://0.0.0.0:${PORT}`);
 });
 
 // Graceful shutdown on process termination
