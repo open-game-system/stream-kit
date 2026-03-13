@@ -57,3 +57,7 @@ junit.xml
 
 # LLM context docs
 .llms
+
+# Agent working files
+.swarm/
+.claude/
