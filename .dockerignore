@@ -1,0 +1,31 @@
+# VCS
+.git
+
+# Node
+node_modules
+
+# Build artifacts / Logs
+.turbo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / IDE generated
+.DS_Store
+*.pem
+*.key
+
+# Examples (ignore all except the one we are building)
+examples/*
+!examples/bun-stream-server
+
+# Packages (ignore node_modules within packages, keep source)
+packages/*/node_modules
+packages/*/dist
+packages/*/tsconfig.tsbuildinfo
+
+# Specific files
+.env
+.env.*
+!.env.example 

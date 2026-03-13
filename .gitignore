@@ -52,11 +52,14 @@ junit.xml
 # Logs
 *.log
 
-# Docker
-Dockerfile
-.dockerignore
-docker-compose.yml
-*.dockerfile 
-
 # Wrangler
 .wrangler/
+playwright-report/
+test-results/
+
+# LLM context docs
+.llms
+
+# Agent working files
+.swarm/
+.claude/

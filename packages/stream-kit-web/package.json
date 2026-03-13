@@ -1,50 +1,42 @@
 {
   "name": "@open-game-system/stream-kit-web",
-  "version": "0.0.0",
-  "description": "Core web client library for OGS Cloud Rendering (Stream Kit)",
-  "main": "./dist/index.js",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.ts",
-  "sideEffects": false,
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
+  "version": "0.1.0",
+  "description": "Browser client for streaming with PeerJS",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
-    "clean": "rimraf dist",
-    "typecheck": "tsc --noEmit",
+    "build": "tsup",
+    "dev": "tsup --watch",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest --coverage",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@open-game-system/stream-kit-types": "workspace:*"
+    "@open-game-system/stream-kit-types": "workspace:*",
+    "peerjs": "^1.5.5"
   },
   "devDependencies": {
-    "rimraf": "^5.0.0",
-    "tsup": "^8.0.0",
-    "typescript": "^5.4.5",
-    "vitest": "^1.6.0",
-    "@vitest/coverage-v8": "^1.6.0",
-    "jsdom": "^24.0.0"
-  },
-  "peerDependencies": {
-    "typescript": ">=4.5.0"
-  },
-  "publishConfig": {
-    "access": "public"
+    "@types/node": "^22.18.1",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "vitest": "^2.1.9"
   },
   "keywords": [
-    "typescript",
-    "web",
-    "stream-kit",
-    "cloud-rendering",
     "webrtc",
-    "ogs"
+    "peerjs",
+    "streaming",
+    "browser"
   ],
-  "author": "OpenGameSystem",
+  "author": "",
   "license": "MIT"
-} 
+}

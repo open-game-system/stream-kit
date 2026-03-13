@@ -61,6 +61,43 @@ export interface StreamKitHooks<TEnv> {
   }) => AsyncIterable<StateChange>;
 }
 
+// New client-based API types
+export interface StreamKitServerConfig {
+  host: string;
+  port?: number;
+  containerImage?: string;
+  containerPort?: number;
+  extensionPath?: string;
+  maxStreams?: number;
+  streamTimeout?: number;
+}
+
+export interface RenderStreamConfig {
+  url: string;
+  width?: number;
+  height?: number;
+  deviceScaleFactor?: number;
+  timeout?: number;
+}
+
+export interface StreamSession {
+  id: string;
+  url: string;
+  status: 'starting' | 'running' | 'stopping' | 'stopped' | 'error';
+  createdAt: Date;
+  lastActiveAt: Date;
+  config: RenderStreamConfig;
+  containerId?: string;
+  peerId?: string;
+}
+
+export interface ContainerManager {
+  start(sessionId: string, config: RenderStreamConfig): Promise<{ containerId: string; port: number }>;
+  stop(containerId: string): Promise<void>;
+  getStatus(containerId: string): Promise<'starting' | 'running' | 'stopping' | 'stopped' | 'error'>;
+  cleanup(): Promise<void>;
+}
+
 // TODO: Import or define StreamState from @open-game-system/stream-kit-types
 // export type StreamState = { /* ... structure of your stream state ... */ };
 // export type StreamMetadata = { /* ... structure of your stream metadata ... */ }; 

@@ -1,107 +1,59 @@
-# Stream Kit Server Example (Cloudflare Containers)
+# Stream Kit Cloudflare Example
 
-This example demonstrates how to run a WebRTC streaming server using Cloudflare Containers, Bun, and Puppeteer. The server can capture browser content and stream it to clients using WebRTC.
+This example is the current source of truth for end-to-end Stream Kit behavior.
 
-## Architecture
+It demonstrates:
 
-- **Container**: Runs a Bun server with Puppeteer for browser automation and WebRTC streaming
-- **Worker**: Manages container lifecycle and routes requests
-- **Durable Object**: Maintains container state and handles container-specific operations
+- a Cloudflare Worker control plane
+- a Durable Object per stream session
+- a Cloudflare Container running Chromium
+- a Chrome extension that captures the rendered tab
+- a browser receiver that plays the returned WebRTC media
 
-## Project Structure
+The deployed path now works with Cloudflare TURN-backed connectivity.
 
-```
-.
-├── wrangler.toml          # Cloudflare Workers/Containers config
-├── package.json           # Worker dependencies
-├── src/                   # Worker & Durable Object code
-│   ├── index.ts          # Worker entry point
-│   └── container.ts      # Durable Object implementation
-├── container/             # Container application code
-│   ├── Dockerfile        # Container configuration
-│   ├── package.json      # Container-specific dependencies
-│   ├── src/
-│   │   └── server.ts     # Bun server with Puppeteer/WebRTC
-│   └── tsconfig.json     # TypeScript config for container
-└── README.md
+## Quick Start
 
-```
+### Local receiver + local container
 
-## Code Organization
-
-The project is split into two main parts:
-
-1. **Worker & Durable Object** (`/src`):
-   - Handles routing and container lifecycle
-   - Implements the external API endpoints
-   - Manages container state via Durable Objects
-
-2. **Container Application** (`/container`):
-   - Runs inside Cloudflare Container
-   - Implements the actual streaming functionality
-   - Uses Bun + Puppeteer for browser automation
-
-## API Routes
-
-### API Endpoints
-
-- `GET /health` - Health check endpoint
-- `POST /stream` - Create a new stream session
-- `GET /stream/:id` - Get stream info and status
-- `DELETE /stream/:id` - Stop and cleanup stream
-
-## Development
-
-1. Install dependencies for both the Worker and Container:
 ```bash
-# Install Worker dependencies
-npm install
-
-# Install Container dependencies
-cd container && npm install
+cd examples/bun-stream-server/container
+bun install
+bun run src/server.ts
 ```
 
-2. Test the container locally:
+Then open [`receiver.html`](./receiver.html) and point it at `http://localhost:8080`.
+
+### Cloudflare deploy
+
 ```bash
-# Build the container (from the container directory)
-cd container
-docker build -t stream-server-test .
-
-# Run it locally
-docker run -p 8080:8080 --rm stream-server-test
-
-# Test with curl
-curl http://localhost:8080/health
+cd examples/bun-stream-server
+npx wrangler deploy
 ```
 
-3. Deploy to Cloudflare:
-```bash
-# From the root directory
-wrangler deploy
-```
+Required Worker secrets:
 
-## Container Details
+- `CLOUDFLARE_TURN_API_TOKEN`
+- `CLOUDFLARE_TURN_KEY_ID`
+- optional `DEBUG_STATE_TOKEN`
 
-The container runs:
-- Bun for the server runtime
-- Puppeteer for browser automation
-- Chrome/Chromium for page rendering
-- WebRTC for streaming
+## Main Endpoints
 
-## Environment Variables
+- `GET /health`
+- `GET /ice-servers`
+- `POST /start-stream`
+- `GET /debug-state` when authorized
 
-The container automatically receives these Cloudflare-provided variables:
-- `CLOUDFLARE_COUNTRY_A2` - Two-letter country code
-- `CLOUDFLARE_LOCATION` - Location name
-- `CLOUDFLARE_REGION` - Region name
+## Current Notes
 
-## Notes
+- The Worker uses `x-stream-session-id` to isolate sessions.
+- TURN credentials are short-lived and currently minted for the receiver on demand.
+- The receiver is still a debugging/demo page, not yet the final OGS SDK surface.
 
-- Initial container provisioning takes a few minutes
-- Each container instance can handle one streaming session
-- The Worker will automatically route requests to the appropriate container instance
-- Container instances are recycled after periods of inactivity
+## Product Direction
 
-## License
+This example proves the runtime. The intended OGS product should eventually hide this infrastructure behind:
 
-MIT License
+- OGS-owned APIs
+- a simpler `stream-kit` SDK
+- `opengame-app` integration through `app-bridge`

@@ -14,14 +14,14 @@
 	"containers": [{
 		"name": "codeflare-containers",
 		"image": "./container/Dockerfile",
-		"class_name": "MyContainer",
-		"instances": 2
+		"class_name": "StreamContainer",
+		"max_instances": 2
 	}],
 	"durable_objects": {
 		"bindings": [
 			{
-				"name": "MY_CONTAINER",
-				"class_name": "MyContainer"
+				"name": "STREAM_CONTAINER",
+				"class_name": "StreamContainer"
 			}
 		]
 	},
@@ -29,6 +29,15 @@
 		{
 			"tag": "v1",
 			"new_sqlite_classes": [
+				"MyContainer"
+			]
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": [
+				"StreamContainer"
+			],
+			"deleted_classes": [
 				"MyContainer"
 			]
 		}
