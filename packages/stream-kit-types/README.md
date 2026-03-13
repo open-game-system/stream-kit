@@ -1,34 +1,30 @@
 # @open-game-system/stream-kit-types
 
-Core type definitions for the Open Game System (OGS) Cloud Rendering service (`stream-kit`).
+Shared TypeScript types for the Stream Kit workspace.
 
-## Overview
+## What This Package Is
 
-This package provides TypeScript type definitions used across the `stream-kit` ecosystem. It defines the core interfaces and types for:
+This package holds the shared interfaces used across the current Stream Kit packages, including:
 
-- Stream configuration and options
-- State management and events
-- WebRTC signaling and connection management
-- Server-side session state
-- JSON patch operations for state synchronization
+- render options
+- stream session metadata
+- client-side stream state
+- input event payloads
+- server-side stream session state
+
+It is the lowest-level package in the workspace and contains no runtime behavior.
 
 ## Installation
 
 ```bash
-npm install @open-game-system/stream-kit-types
-# or
 pnpm add @open-game-system/stream-kit-types
-# or
-yarn add @open-game-system/stream-kit-types
 ```
 
-## Key Types
+## Main Types
 
-### RenderOptions
+### `RenderOptions`
 
-Configuration options for stream quality and behavior:
-
-```typescript
+```ts
 interface RenderOptions {
   resolution?: "720p" | "1080p" | "1440p" | "4k" | string;
   targetFps?: number;
@@ -38,11 +34,9 @@ interface RenderOptions {
 }
 ```
 
-### StreamState
+### `StreamState`
 
-Real-time state of a streaming session:
-
-```typescript
+```ts
 interface StreamState {
   status: "initializing" | "connecting" | "streaming" | "reconnecting" | "error" | "ended";
   latency?: number;
@@ -54,52 +48,53 @@ interface StreamState {
 }
 ```
 
-### StreamEvent & InputStreamEvent
+### `StreamSession`
 
-Event structures for client-server communication:
-
-```typescript
-interface StreamEvent {
-  type: string;
-  payload?: any;
+```ts
+interface StreamSession {
+  sessionId: string;
+  status: StreamState["status"];
+  signalingUrl?: string;
+  iceServers?: RTCIceServer[];
+  estimatedStartTime?: number;
+  region?: string;
+  error?: string;
 }
+```
 
-type InputStreamEvent = StreamEvent & {
-  type: "interaction" | "command";
-  data: {
-    action?: string;
-    position?: { x: number; y: number };
-    // ... other properties
-  };
-};
+### `InputStreamEvent`
+
+```ts
+type InputStreamEvent =
+  | { type: "interaction"; data: { action: string; position?: { x: number; y: number } } }
+  | { type: "command"; data: { command: string; args?: any[] } };
 ```
 
 ## Usage
 
-Import types as needed in your TypeScript code:
+```ts
+import type {
+  RenderOptions,
+  StreamSession,
+  StreamState,
+} from "@open-game-system/stream-kit-types";
 
-```typescript
-import type { 
-  RenderOptions, 
-  StreamState, 
-  StreamEvent 
-} from '@open-game-system/stream-kit-types';
-
-function configureStream(options: RenderOptions) {
-  // Your implementation
-}
-
-function handleStateChange(state: StreamState) {
-  // Your implementation
+function handleState(state: StreamState) {
+  console.log(state.status);
 }
 ```
 
+## Notes
+
+- These types reflect the current package layer, not the final OGS SDK surface.
+- Some types still model the older broker-style API used by `stream-kit-web`.
+
 ## Related Packages
 
-- `@open-game-system/stream-kit-web`: Core client implementation
-- `@open-game-system/stream-kit-react`: React components and hooks
-- `@open-game-system/stream-kit-server`: Server-side implementation
+- [`@open-game-system/stream-kit-web`](../stream-kit-web/README.md)
+- [`@open-game-system/stream-kit-react`](../stream-kit-react/README.md)
+- [`@open-game-system/stream-kit-server`](../stream-kit-server/README.md)
 
 ## License
 
-MIT License 
+MIT
