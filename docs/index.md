@@ -7,6 +7,7 @@ Start here, then load only the document you need.
 | Architecture and repo boundaries | [architecture.md](./architecture.md) |
 | OGS integration model and third-party developer story | [integration.md](./integration.md) |
 | Current verified state and next steps | [status.md](./status.md) |
+| Phase 2 execution plan | [next-steps.md](./next-steps.md) |
 | Cloudflare example walkthrough | [../examples/bun-stream-server/README.md](../examples/bun-stream-server/README.md) |
 
 ## Quick Summary

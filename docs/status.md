@@ -34,6 +34,8 @@ Relevant commits:
 
 ## What Needs To Be Done Next
 
+See also: [`next-steps.md`](./next-steps.md)
+
 ### Productization
 
 - define the public `stream-kit` SDK API
