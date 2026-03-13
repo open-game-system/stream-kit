@@ -25,6 +25,11 @@ Relevant commits:
 - Deployed Worker + Durable Object + container boot
 - Chromium page navigation inside the container
 - WebRTC media delivery in the deployed environment
+- PR-scoped Cloudflare preview deployments can be validated with Playwright
+  before merge
+- Manual Chrome receiver validation is still the source of truth for full media
+  playback; the Playwright PR check currently validates real-infra session
+  startup rather than rendered-video playback
 
 ## Main Risks / Gaps
 

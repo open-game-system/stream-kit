@@ -15,8 +15,7 @@
 		"name": "codeflare-containers",
 		"image": "./container/Dockerfile",
 		"class_name": "StreamContainer",
-		"instances": 2,
-		"enable_internet": true
+		"max_instances": 2
 	}],
 	"durable_objects": {
 		"bindings": [

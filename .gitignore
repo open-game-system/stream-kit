@@ -54,6 +54,8 @@ junit.xml
 
 # Wrangler
 .wrangler/
+playwright-report/
+test-results/
 
 # LLM context docs
 .llms

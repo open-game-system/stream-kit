@@ -217,8 +217,10 @@
         let callHandlersBound = false;
         let currentTraceId = null;
         const sessionId = 'session-' + Math.random().toString(36).substring(2, 15);
+        const searchParams = new URLSearchParams(window.location.search);
         
         const urlInput = document.getElementById('urlInput');
+        const serverUrlInput = document.getElementById('serverUrlInput');
         const receiverIdDisplay = document.getElementById('receiverIdDisplay');
         const peerIdInput = document.getElementById('peerIdInput');
         const startStreamBtn = document.getElementById('startStreamBtn');
@@ -236,6 +238,13 @@
         function updateStatus(message, type = 'disconnected') {
             status.textContent = message;
             status.className = `status ${type}`;
+            status.dataset.status = type;
+            status.dataset.message = message;
+            if (currentTraceId) {
+                status.dataset.traceId = currentTraceId;
+            } else {
+                delete status.dataset.traceId;
+            }
         }
 
         async function logPeerConnectionStats(call, label = 'rtc') {
@@ -321,7 +330,7 @@
                 // Step 1: Load ICE configuration before creating either peer.
                 updateStatus('📡 Requesting stream from container server...', 'connecting');
                 
-                const serverUrl = document.getElementById('serverUrlInput').value.trim();
+                const serverUrl = serverUrlInput.value.trim();
                 const endpoint = serverUrl.endsWith('/') ? `${serverUrl}start-stream` : `${serverUrl}/start-stream`;
                 const iceServersEndpoint = serverUrl.endsWith('/') ? `${serverUrl}ice-servers` : `${serverUrl}/ice-servers`;
                 currentTraceId = createTraceId();
@@ -760,6 +769,24 @@
         console.log('📱 Receiver ID:', receiverId);
         console.log('🪪 Session ID:', sessionId);
         console.log('💡 Enter a URL and click "Start Stream & Listen" to begin');
+
+        const initialServerUrl = searchParams.get('serverUrl');
+        if (initialServerUrl) {
+            serverUrlInput.value = initialServerUrl;
+        }
+
+        const initialStreamUrl = searchParams.get('streamUrl');
+        if (initialStreamUrl) {
+            urlInput.value = initialStreamUrl;
+        }
+
+        if (searchParams.get('autostart') === '1') {
+            window.addEventListener('load', () => {
+                setTimeout(() => {
+                    startStreamAndListen();
+                }, 250);
+            }, { once: true });
+        }
     </script>
 </body>
 </html> 
