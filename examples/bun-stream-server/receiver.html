@@ -216,6 +216,7 @@
         let isListening = false;
         let callHandlersBound = false;
         let currentTraceId = null;
+        const sessionId = 'session-' + Math.random().toString(36).substring(2, 15);
         
         const urlInput = document.getElementById('urlInput');
         const receiverIdDisplay = document.getElementById('receiverIdDisplay');
@@ -329,7 +330,8 @@
                 const iceResponse = await fetch(iceServersEndpoint, {
                     method: 'GET',
                     headers: {
-                        'x-stream-trace-id': currentTraceId
+                        'x-stream-trace-id': currentTraceId,
+                        'x-stream-session-id': sessionId
                     }
                 });
                 const icePayload = await iceResponse.json();
@@ -370,7 +372,8 @@
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'x-stream-trace-id': currentTraceId
+                        'x-stream-trace-id': currentTraceId,
+                        'x-stream-session-id': sessionId
                     },
                     body: JSON.stringify({
                         url: url,
@@ -755,6 +758,7 @@
         
         console.log('🎥 Stream Kit Receiver ready');
         console.log('📱 Receiver ID:', receiverId);
+        console.log('🪪 Session ID:', sessionId);
         console.log('💡 Enter a URL and click "Start Stream & Listen" to begin');
     </script>
 </body>

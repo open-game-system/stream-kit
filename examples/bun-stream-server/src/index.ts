@@ -9,6 +9,7 @@ const OPEN_CONTAINER_PORT = 8080;
 const STREAM_INSTANCE_NAME = "default-singleton-debug-v3";
 const TURN_TTL_SECONDS = 300;
 const DEBUG_TOKEN_HEADER = "x-debug-token";
+const SESSION_ID_HEADER = "x-stream-session-id";
 
 function logTrace(traceId: string, event: string, details?: Record<string, unknown>) {
   if (details) {
@@ -21,6 +22,16 @@ function logTrace(traceId: string, event: string, details?: Record<string, unkno
 function withTraceHeader(response: Response, traceId: string): Response {
   const cloned = new Response(response.body, response);
   cloned.headers.set("x-stream-trace-id", traceId);
+  return cloned;
+}
+
+function withSessionHeader(response: Response, sessionId: string | null): Response {
+  if (!sessionId) {
+    return response;
+  }
+
+  const cloned = new Response(response.body, response);
+  cloned.headers.set(SESSION_ID_HEADER, sessionId);
   return cloned;
 }
 
@@ -74,8 +85,23 @@ function buildCorsHeaders(methods: string): HeadersInit {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": methods,
-    "Access-Control-Allow-Headers": `Content-Type, x-stream-trace-id, ${DEBUG_TOKEN_HEADER}`,
+    "Access-Control-Allow-Headers": `Content-Type, x-stream-trace-id, ${DEBUG_TOKEN_HEADER}, ${SESSION_ID_HEADER}`,
+    "Access-Control-Expose-Headers": `x-stream-trace-id, ${SESSION_ID_HEADER}`,
   };
+}
+
+export function resolveSessionId(request: Request): string | null {
+  const providedSessionId = request.headers.get(SESSION_ID_HEADER);
+  if (!providedSessionId) {
+    return null;
+  }
+
+  const normalizedSessionId = providedSessionId.trim();
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(normalizedSessionId)) {
+    return null;
+  }
+
+  return normalizedSessionId;
 }
 
 export async function generateTurnIceServers(
@@ -341,9 +367,12 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const traceId = request.headers.get("x-stream-trace-id") || crypto.randomUUID();
     const url = new URL(request.url);
+    const sessionId = resolveSessionId(request);
+    const streamInstanceName = sessionId ? `session-${sessionId}` : STREAM_INSTANCE_NAME;
     logTrace(traceId, "worker_request_received", {
       method: request.method,
       path: url.pathname,
+      sessionId,
     });
 
     if (url.pathname === "/ice-servers" && request.method === "GET") {
@@ -353,6 +382,7 @@ export default {
             {
               iceServers: await generateTurnIceServers(env, traceId),
               traceId,
+              sessionId,
             },
             {
               headers: {
@@ -362,12 +392,13 @@ export default {
           ),
           traceId
         );
-        logTrace(traceId, "worker_response_sent", { status: response.status, path: url.pathname });
-        return response;
+        const tracedResponse = withSessionHeader(response, sessionId);
+        logTrace(traceId, "worker_response_sent", { status: tracedResponse.status, path: url.pathname, sessionId });
+        return tracedResponse;
       } catch (error) {
         const response = withTraceHeader(
           createJsonResponse(
-            { error: (error as Error).message, traceId },
+            { error: (error as Error).message, traceId, sessionId },
             {
               status: 500,
               headers: {
@@ -377,8 +408,9 @@ export default {
           ),
           traceId
         );
-        logTrace(traceId, "worker_response_sent", { status: response.status, path: url.pathname });
-        return response;
+        const tracedResponse = withSessionHeader(response, sessionId);
+        logTrace(traceId, "worker_response_sent", { status: tracedResponse.status, path: url.pathname, sessionId });
+        return tracedResponse;
       }
     }
 
@@ -393,12 +425,14 @@ export default {
         ),
         traceId
       );
+      const tracedResponse = withSessionHeader(response, sessionId);
       logTrace(traceId, "worker_response_sent", {
-        status: response.status,
+        status: tracedResponse.status,
         path: url.pathname,
         authorized: false,
+        sessionId,
       });
-      return response;
+      return tracedResponse;
     }
 
     if (request.method === "OPTIONS") {
@@ -409,20 +443,26 @@ export default {
         }),
         traceId
       );
-      logTrace(traceId, "worker_response_sent", { status: response.status, path: url.pathname });
-      return response;
+      const tracedResponse = withSessionHeader(response, sessionId);
+      logTrace(traceId, "worker_response_sent", { status: tracedResponse.status, path: url.pathname, sessionId });
+      return tracedResponse;
     }
 
-    // Always route through the same Durable Object to share the container instance
-    const id = env.STREAM_CONTAINER.idFromName(STREAM_INSTANCE_NAME);
+    const id = env.STREAM_CONTAINER.idFromName(streamInstanceName);
     const stub = env.STREAM_CONTAINER.get(id);
     const forwardedRequest = new Request(request, {
       headers: new Headers(request.headers),
     });
     forwardedRequest.headers.set("x-stream-trace-id", traceId);
+    if (sessionId) {
+      forwardedRequest.headers.set(SESSION_ID_HEADER, sessionId);
+    }
 
-    const response = withTraceHeader(await stub.fetch(forwardedRequest), traceId);
-    logTrace(traceId, "worker_response_sent", { status: response.status, path: url.pathname });
+    const response = withSessionHeader(
+      withTraceHeader(await stub.fetch(forwardedRequest), traceId),
+      sessionId
+    );
+    logTrace(traceId, "worker_response_sent", { status: response.status, path: url.pathname, sessionId });
     return response;
   },
 };

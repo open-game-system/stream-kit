@@ -91,6 +91,7 @@ describe("bun-stream-server worker", () => {
           credential: "pass",
         },
       ],
+      sessionId: null,
       traceId: "trace-ice-1",
     });
     expect(fetchMock).toHaveBeenCalledWith(
@@ -147,6 +148,35 @@ describe("bun-stream-server worker", () => {
     const forwardedRequest = container.calls[0];
     expect(forwardedRequest.headers.get("x-stream-trace-id")).toBe(
       "trace-debug-allowed"
+    );
+  });
+
+  it("routes requests to a session-scoped durable object when a session header is present", async () => {
+    const { env, container } = createEnv();
+
+    const response = await worker.fetch(
+      new Request("https://example.com/start-stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-stream-trace-id": "trace-session-1",
+          "x-stream-session-id": "receiver-session-1",
+        },
+        body: JSON.stringify({
+          url: "https://example.com",
+          peerId: "receiver-123",
+          iceServers: [],
+        }),
+      }),
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(container.idFromName).toHaveBeenCalledWith("session-receiver-session-1");
+
+    const forwardedRequest = container.calls[0];
+    expect(forwardedRequest.headers.get("x-stream-session-id")).toBe(
+      "receiver-session-1"
     );
   });
 });
